@@ -44,6 +44,8 @@ fun DacScreen(
     ditherMode: String,
     performanceProfile: String,
     bufferSize: Int,
+    hasFloatingPermission: Boolean,
+    onRequestFloatingPermission: () -> Unit,
     onHiResToggle: () -> Unit,
     onSampleRateChange: (Int) -> Unit,
     onBitDepthChange: (Int) -> Unit,
@@ -101,7 +103,78 @@ fun DacScreen(
             Spacer(modifier = Modifier.height(20.dp))
         }
 
-        // 3. Bit-Perfect DAC Bypass Toggle Switch Card
+
+        // 3. Floating permission card required for UAPP-style DAC bypass controls
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(20.dp))
+                    .testTag("floating_permission_card"),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (hasFloatingPermission) Color(0xFF101611) else Color(0xFF161012)
+                ),
+                shape = RoundedCornerShape(20.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (hasFloatingPermission) Color(0xFF34C759).copy(alpha = 0.15f)
+                                else Color(0xFFE23E57).copy(alpha = 0.15f)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (hasFloatingPermission) Icons.Default.CheckCircle else Icons.Default.OpenInNew,
+                            contentDescription = "Floating permission status",
+                            tint = if (hasFloatingPermission) Color(0xFF34C759) else Color(0xFFE23E57),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(16.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Floating DAC Permission",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Text(
+                            text = if (hasFloatingPermission) {
+                                "Izin overlay aktif untuk kontrol DAC bypass seperti UAPP."
+                            } else {
+                                "Aktifkan izin Draw over other apps agar DAC bypass dapat berjalan."
+                            },
+                            color = if (hasFloatingPermission) Color(0xFF34C759) else Color.Gray,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+
+                    if (!hasFloatingPermission) {
+                        Button(
+                            onClick = onRequestFloatingPermission,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE23E57)),
+                            modifier = Modifier.testTag("request_floating_permission_button")
+                        ) {
+                            Text("Izinkan")
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(20.dp))
+        }
+
+        // 4. Bit-Perfect DAC Bypass Toggle Switch Card
         item {
             Card(
                 modifier = Modifier
@@ -147,7 +220,9 @@ fun DacScreen(
                             style = MaterialTheme.typography.bodyLarge
                         )
                         Text(
-                            text = if (isHiResEngineActive) "Direct Hardware Mode Active" else "Bypass mode disabled (Standard Mixer)",
+                            text = if (isHiResEngineActive) "Direct Hardware Mode Active"
+                                   else if (!hasFloatingPermission) "Floating permission required for DAC bypass"
+                                   else "Bypass mode disabled (Standard Mixer)",
                             color = if (isHiResEngineActive) Color(0xFFE23E57) else Color.Gray,
                             style = MaterialTheme.typography.bodySmall
                         )
@@ -169,7 +244,7 @@ fun DacScreen(
             Spacer(modifier = Modifier.height(20.dp))
         }
 
-        // 4. Output Stream Properties Controls
+        // 5. Output Stream Properties Controls
         item {
             Text(
                 text = "STREAM QUALITY SYNTHESIS",
@@ -310,7 +385,7 @@ fun DacScreen(
             Spacer(modifier = Modifier.height(20.dp))
         }
 
-        // 5. Advanced Engine Controls
+        // 6. Advanced Engine Controls
         item {
             Text(
                 text = "ADVANCED HARDWARE DRIVER LEVEL SETUP",
