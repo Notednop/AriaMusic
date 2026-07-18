@@ -1,6 +1,9 @@
 package com.example
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -18,6 +21,10 @@ import androidx.compose.material3.*
 import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
@@ -26,6 +33,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.example.ui.MusicViewModel
 import com.example.ui.components.AudioQualityDialog
 import com.example.ui.components.EqualizerPanel
@@ -81,6 +90,40 @@ fun MainAppScreen(viewModel: MusicViewModel) {
     val playbackError by viewModel.playbackError.collectAsState()
 
     val context = LocalContext.current
+    var hasFloatingPermission by remember {
+        mutableStateOf(
+            android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.M ||
+                Settings.canDrawOverlays(context)
+        )
+    }
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+
+    fun refreshFloatingPermission() {
+        hasFloatingPermission = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.M ||
+            Settings.canDrawOverlays(context)
+    }
+
+    fun requestFloatingPermission() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:${context.packageName}")
+            )
+            context.startActivity(intent)
+        }
+        refreshFloatingPermission()
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                refreshFloatingPermission()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     LaunchedEffect(playbackError) {
         playbackError?.let {
             Toast.makeText(context, it, Toast.LENGTH_LONG).show()
@@ -196,7 +239,20 @@ fun MainAppScreen(viewModel: MusicViewModel) {
                     ditherMode = ditherMode,
                     performanceProfile = performanceProfile,
                     bufferSize = bufferSize,
-                    onHiResToggle = { viewModel.toggleHiResEngine() },
+                    hasFloatingPermission = hasFloatingPermission,
+                    onRequestFloatingPermission = { requestFloatingPermission() },
+                    onHiResToggle = {
+                        if (isHiResEngineEnabled || hasFloatingPermission) {
+                            viewModel.toggleHiResEngine()
+                        } else {
+                            Toast.makeText(
+                                context,
+                                "Aktifkan izin floating/overlay dulu untuk DAC bypass.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            requestFloatingPermission()
+                        }
+                    },
                     onSampleRateChange = { viewModel.setDacSampleRate(it) },
                     onBitDepthChange = { viewModel.setDacBitDepth(it) },
                     onFilterChange = { viewModel.setResamplingFilter(it) },
