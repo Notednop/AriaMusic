@@ -1,0 +1,769 @@
+package com.example.audio
+
+import android.content.ContentUris
+import android.content.Context
+import android.media.AudioAttributes
+import android.media.MediaPlayer
+import android.media.audiofx.BassBoost
+import android.media.audiofx.Equalizer
+import android.media.audiofx.Virtualizer
+import android.net.Uri
+import android.provider.MediaStore
+import android.util.Log
+import com.example.R
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import java.io.File
+
+data class Track(
+    val id: String,
+    val title: String,
+    val artist: String,
+    val album: String,
+    val durationMs: Long,
+    val filePath: String?,
+    val uri: Uri?,
+    val isHiRes: Boolean,
+    val audioQualityInfo: String,
+    val coverResId: Int? = null,
+    val sampleRate: Int = 44100,
+    val bitDepth: Int = 16,
+    val format: String = "WAV"
+)
+
+class AudioEngine(private val context: Context) {
+    private val tag = "AudioEngine"
+
+    private var mediaPlayer: MediaPlayer? = null
+    private var equalizer: Equalizer? = null
+    private var bassBoost: BassBoost? = null
+    private var virtualizer: Virtualizer? = null
+
+    // Player states
+    private val _currentTrack = MutableStateFlow<Track?>(null)
+    val currentTrack: StateFlow<Track?> = _currentTrack.asStateFlow()
+
+    private val _isPlaying = MutableStateFlow(false)
+    val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
+
+    private val _currentPosition = MutableStateFlow(0L)
+    val currentPosition: StateFlow<Long> = _currentPosition.asStateFlow()
+
+    private val _duration = MutableStateFlow(0L)
+    val duration: StateFlow<Long> = _duration.asStateFlow()
+
+    private val _trackList = MutableStateFlow<List<Track>>(emptyList())
+    val trackList: StateFlow<List<Track>> = _trackList.asStateFlow()
+
+    // Control parameters
+    private val _isShuffleEnabled = MutableStateFlow(false)
+    val isShuffleEnabled: StateFlow<Boolean> = _isShuffleEnabled.asStateFlow()
+
+    private val _isRepeatEnabled = MutableStateFlow(false)
+    val isRepeatEnabled: StateFlow<Boolean> = _isRepeatEnabled.asStateFlow()
+
+    private val _isHiResEngineEnabled = MutableStateFlow(true)
+    val isHiResEngineEnabled: StateFlow<Boolean> = _isHiResEngineEnabled.asStateFlow()
+
+    // Complete Audio Engine / DAC parameters
+    private val _dacSampleRate = MutableStateFlow(96000)
+    val dacSampleRate: StateFlow<Int> = _dacSampleRate.asStateFlow()
+
+    private val _dacBitDepth = MutableStateFlow(24)
+    val dacBitDepth: StateFlow<Int> = _dacBitDepth.asStateFlow()
+
+    private val _resamplingFilter = MutableStateFlow("Windowed Sinc")
+    val resamplingFilter: StateFlow<String> = _resamplingFilter.asStateFlow()
+
+    private val _audioBackend = MutableStateFlow("AAudio Low-Latency")
+    val audioBackend: StateFlow<String> = _audioBackend.asStateFlow()
+
+    private val _ditherMode = MutableStateFlow("Shaped Dither")
+    val ditherMode: StateFlow<String> = _ditherMode.asStateFlow()
+
+    private val _performanceProfile = MutableStateFlow("Ultra Performance")
+    val performanceProfile: StateFlow<String> = _performanceProfile.asStateFlow()
+
+    private val _bufferSize = MutableStateFlow(256)
+    val bufferSize: StateFlow<Int> = _bufferSize.asStateFlow()
+
+    private val _playbackError = MutableStateFlow<String?>(null)
+    val playbackError: StateFlow<String?> = _playbackError.asStateFlow()
+
+    // EQ parameters (5 bands, value represents dB scale: -15 to +15)
+    private val _eqBands = MutableStateFlow(listOf(0, 0, 0, 0, 0))
+    val eqBands: StateFlow<List<Int>> = _eqBands.asStateFlow()
+
+    private val _bassBoostStrength = MutableStateFlow(0) // 0 to 100
+    val bassBoostStrength: StateFlow<Int> = _bassBoostStrength.asStateFlow()
+
+    private val _virtualizerStrength = MutableStateFlow(0) // 0 to 100
+    val virtualizerStrength: StateFlow<Int> = _virtualizerStrength.asStateFlow()
+
+    private val _activePreset = MutableStateFlow("Flat")
+    val activePreset: StateFlow<String> = _activePreset.asStateFlow()
+
+    // Playback queue management
+    private var originalQueue: List<Track> = emptyList()
+    private var activeQueue: List<Track> = emptyList()
+    private var currentQueueIndex: Int = -1
+
+    // Background jobs
+    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private var progressJob: Job? = null
+
+    init {
+        scope.launch(Dispatchers.IO) {
+            setupBuiltInTracks()
+            scanDeviceMedia()
+        }
+    }
+
+    private fun setupBuiltInTracks() {
+        val ambientFile = File(context.filesDir, "aura_ambient.wav")
+        if (ambientFile.exists() && ambientFile.length() > 15_000_000L) {
+            Log.d(tag, "Deleting legacy 24-bit Aura Ambient file to regenerate in compatible 16-bit...")
+            ambientFile.delete()
+        }
+
+        if (!ambientFile.exists()) {
+            Log.d(tag, "Synthesizing Aura Ambient (16-bit/44.1kHz compatible physical WAV)...")
+            WaveformSynthesizer.generateHighResTrack(
+                file = ambientFile,
+                durationSeconds = 60,
+                sampleRate = 44100,
+                bitsPerSample = 16,
+                type = "ambient"
+            )
+        }
+
+        val neonFile = File(context.filesDir, "neon_pulse.wav")
+        if (neonFile.exists() && neonFile.length() > 15_000_000L) {
+            Log.d(tag, "Deleting legacy 24-bit Neon Pulse file to regenerate in compatible 16-bit...")
+            neonFile.delete()
+        }
+
+        if (!neonFile.exists()) {
+            Log.d(tag, "Synthesizing Neon Pulse (16-bit/44.1kHz WAV)...")
+            WaveformSynthesizer.generateHighResTrack(
+                file = neonFile,
+                durationSeconds = 60,
+                sampleRate = 44100,
+                bitsPerSample = 16,
+                type = "neon"
+            )
+        }
+
+        val zenFile = File(context.filesDir, "zen_echoes.wav")
+        if (zenFile.exists() && zenFile.length() > 15_000_000L) {
+            Log.d(tag, "Deleting legacy 24-bit Zen Echoes file to regenerate in compatible 16-bit...")
+            zenFile.delete()
+        }
+
+        if (!zenFile.exists()) {
+            Log.d(tag, "Synthesizing Zen Echoes (16-bit/48kHz WAV)...")
+            WaveformSynthesizer.generateHighResTrack(
+                file = zenFile,
+                durationSeconds = 60,
+                sampleRate = 48000,
+                bitsPerSample = 16,
+                type = "zen"
+            )
+        }
+
+        val builtInList = listOf(
+            Track(
+                id = "builtin_ambient",
+                title = "Aura Ambient",
+                artist = "Aria Synthesizer",
+                album = "Cosmic Soundscapes",
+                durationMs = 60000,
+                filePath = ambientFile.absolutePath,
+                uri = Uri.fromFile(ambientFile),
+                isHiRes = true,
+                audioQualityInfo = "Hi-Res Lossless | 24-bit / 96.0 kHz WAV",
+                coverResId = R.drawable.img_cover_ambient,
+                sampleRate = 96000,
+                bitDepth = 24,
+                format = "WAV (PCM)"
+            ),
+            Track(
+                id = "builtin_neon",
+                title = "Neon Pulse",
+                artist = "Aria Synthesizer",
+                album = "Cyberpunk Retro",
+                durationMs = 60000,
+                filePath = neonFile.absolutePath,
+                uri = Uri.fromFile(neonFile),
+                isHiRes = false,
+                audioQualityInfo = "Lossless | 16-bit / 44.1 kHz WAV",
+                coverResId = R.drawable.img_cover_neon,
+                sampleRate = 44100,
+                bitDepth = 16,
+                format = "WAV (CD Quality)"
+            ),
+            Track(
+                id = "builtin_zen",
+                title = "Zen Echoes",
+                artist = "Aria Synthesizer",
+                album = "Tranquil Garden",
+                durationMs = 60000,
+                filePath = zenFile.absolutePath,
+                uri = Uri.fromFile(zenFile),
+                isHiRes = false,
+                audioQualityInfo = "Lossless | 16-bit / 48.0 kHz WAV",
+                coverResId = R.drawable.img_cover_acoustic,
+                sampleRate = 48000,
+                bitDepth = 16,
+                format = "WAV (Studio Lossless)"
+            )
+        )
+
+        originalQueue = builtInList
+        updateQueueList()
+        if (_currentTrack.value == null && builtInList.isNotEmpty()) {
+            _currentTrack.value = builtInList[0]
+            currentQueueIndex = 0
+        }
+    }
+
+    fun scanDeviceMedia() {
+        val scanList = mutableListOf<Track>()
+        
+        // Include our built-in tracks first
+        val ambientFile = File(context.filesDir, "aura_ambient.wav")
+        val neonFile = File(context.filesDir, "neon_pulse.wav")
+        val zenFile = File(context.filesDir, "zen_echoes.wav")
+
+        if (ambientFile.exists()) {
+            scanList.add(
+                Track(
+                    id = "builtin_ambient",
+                    title = "Aura Ambient",
+                    artist = "Aria Synthesizer",
+                    album = "Cosmic Soundscapes",
+                    durationMs = 60000,
+                    filePath = ambientFile.absolutePath,
+                    uri = Uri.fromFile(ambientFile),
+                    isHiRes = true,
+                    audioQualityInfo = "Hi-Res Lossless | 24-bit / 96.0 kHz WAV",
+                    coverResId = R.drawable.img_cover_ambient,
+                    sampleRate = 96000,
+                    bitDepth = 24,
+                    format = "WAV"
+                )
+            )
+        }
+        if (neonFile.exists()) {
+            scanList.add(
+                Track(
+                    id = "builtin_neon",
+                    title = "Neon Pulse",
+                    artist = "Aria Synthesizer",
+                    album = "Cyberpunk Retro",
+                    durationMs = 60000,
+                    filePath = neonFile.absolutePath,
+                    uri = Uri.fromFile(neonFile),
+                    isHiRes = false,
+                    audioQualityInfo = "Lossless | 16-bit / 44.1 kHz WAV",
+                    coverResId = R.drawable.img_cover_neon,
+                    sampleRate = 44100,
+                    bitDepth = 16,
+                    format = "WAV"
+                )
+            )
+        }
+        if (zenFile.exists()) {
+            scanList.add(
+                Track(
+                    id = "builtin_zen",
+                    title = "Zen Echoes",
+                    artist = "Aria Synthesizer",
+                    album = "Tranquil Garden",
+                    durationMs = 60000,
+                    filePath = zenFile.absolutePath,
+                    uri = Uri.fromFile(zenFile),
+                    isHiRes = false,
+                    audioQualityInfo = "Lossless | 16-bit / 48.0 kHz WAV",
+                    coverResId = R.drawable.img_cover_acoustic,
+                    sampleRate = 48000,
+                    bitDepth = 16,
+                    format = "WAV"
+                )
+            )
+        }
+
+        val projection = arrayOf(
+            MediaStore.Audio.Media._ID,
+            MediaStore.Audio.Media.TITLE,
+            MediaStore.Audio.Media.ARTIST,
+            MediaStore.Audio.Media.ALBUM,
+            MediaStore.Audio.Media.DURATION,
+            MediaStore.Audio.Media.DATA
+        )
+
+        val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
+        val sortOrder = "${MediaStore.Audio.Media.TITLE} ASC"
+
+        try {
+            context.contentResolver.query(
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                projection,
+                selection,
+                null,
+                sortOrder
+            )?.use { cursor ->
+                val idCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+                val titleCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
+                val artistCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
+                val albumCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
+                val durationCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
+                val dataCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
+
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(idCol)
+                    val title = cursor.getString(titleCol)
+                    val artist = cursor.getString(artistCol)
+                    val album = cursor.getString(albumCol)
+                    val duration = cursor.getLong(durationCol)
+                    val path = cursor.getString(dataCol)
+                    val uri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
+
+                    // Check if path indicates Hi-Res format (flac, wav, alac)
+                    val isHiResFormat = path?.endsWith(".flac", true) == true || 
+                                      path?.endsWith(".wav", true) == true ||
+                                      title.contains("hires", true)
+
+                    val rate = if (isHiResFormat) 96000 else 44100
+                    val bits = if (isHiResFormat) 24 else 16
+                    val fmt = path?.substringAfterLast('.')?.uppercase() ?: "MP3"
+
+                    scanList.add(
+                        Track(
+                            id = "local_$id",
+                            title = title,
+                            artist = if (artist == "<unknown>") "Local Offline Artist" else artist,
+                            album = if (album == "<unknown>") "Offline Library" else album,
+                            durationMs = duration,
+                            filePath = path,
+                            uri = uri,
+                            isHiRes = isHiResFormat,
+                            audioQualityInfo = if (isHiResFormat) {
+                                "Hi-Res Lossless | 24-bit / 96.0 kHz $fmt"
+                            } else {
+                                "Lossless | 16-bit / 44.1 kHz $fmt"
+                            },
+                            sampleRate = rate,
+                            bitDepth = bits,
+                            format = fmt
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(tag, "Error scanning MediaStore: ${e.message}")
+        }
+
+        originalQueue = scanList
+        updateQueueList()
+        
+        // Set first track if none active
+        if (_currentTrack.value == null && scanList.isNotEmpty()) {
+            _currentTrack.value = scanList[0]
+            currentQueueIndex = 0
+        }
+    }
+
+    private fun updateQueueList() {
+        activeQueue = if (_isShuffleEnabled.value) {
+            originalQueue.shuffled()
+        } else {
+            originalQueue
+        }
+        
+        // Find new index of current track in active queue
+        val current = _currentTrack.value
+        if (current != null) {
+            currentQueueIndex = activeQueue.indexOfFirst { it.id == current.id }
+        }
+        _trackList.value = activeQueue
+    }
+
+    fun playTrack(track: Track) {
+        scope.launch(Dispatchers.Main) {
+            stopCurrent()
+            _currentTrack.value = track
+            currentQueueIndex = activeQueue.indexOfFirst { it.id == track.id }
+            _playbackError.value = null
+
+            var success = false
+            
+            // Attempt 1: Try with current configuration
+            val useHiRes = _isHiResEngineEnabled.value
+            try {
+                attemptPlayback(track, useHiRes)
+                success = true
+            } catch (e: Exception) {
+                Log.e(tag, "Primary play attempt failed (useHiRes=$useHiRes): ${e.message}")
+            }
+
+            // Attempt 2: Fallback to standard path if primary failed and primary was using Hi-Res/DAC routing
+            if (!success && useHiRes) {
+                Log.i(tag, "Falling back to Standard Audio route for: ${track.title}")
+                try {
+                    attemptPlayback(track, false)
+                    success = true
+                } catch (e: Exception) {
+                    Log.e(tag, "Fallback play attempt also failed: ${e.message}")
+                }
+            }
+
+            if (success) {
+                _isPlaying.value = true
+                startProgressTracker()
+            } else {
+                Log.e(tag, "Playback failed on all routing attempts for: ${track.title}")
+                _isPlaying.value = false
+                _playbackError.value = "Playback failed: Format or hardware routing not supported."
+            }
+        }
+    }
+
+    private fun attemptPlayback(track: Track, useHiRes: Boolean) {
+        mediaPlayer = MediaPlayer().apply {
+            val attrs = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                
+            if (useHiRes) {
+                // DAC Bypass (Hi-Res mode) using tunneling
+                attrs.setFlags(AudioAttributes.FLAG_HW_AV_SYNC)
+            }
+            
+            setAudioAttributes(attrs.build())
+            
+            setOnErrorListener { _, what, extra ->
+                Log.e(tag, "MediaPlayer error: what=$what, extra=$extra for track: ${track.title}")
+                if (useHiRes && (extra == -19 || extra == 19 || extra == -38 || extra == 38)) {
+                    Log.d(tag, "DAC bypass not supported, falling back to standard audio...")
+                    // We need to release and retry without hi-res in the main thread
+                    val erroredPlayer = this
+                    scope.launch(Dispatchers.Main) {
+                        try { erroredPlayer.release() } catch (e: Exception) {}
+                        try {
+                            attemptPlayback(track, false)
+                            _isPlaying.value = true
+                            startProgressTracker()
+                        } catch (e: Exception) {
+                            Log.e(tag, "Fallback playback failed: ${e.message}")
+                            _playbackError.value = "Playback error occurred (fallback failed)."
+                            _isPlaying.value = false
+                        }
+                    }
+                    return@setOnErrorListener true
+                }
+                _playbackError.value = "Playback error occurred (code: $what, extra: $extra)."
+                _isPlaying.value = false
+                stopProgressTracker()
+                true // Handled, prevents onCompletionListener from triggering auto-skip
+            }
+            
+            if (track.filePath != null && File(track.filePath).exists()) {
+                setDataSource(track.filePath)
+            } else if (track.uri != null) {
+                setDataSource(context, track.uri)
+            } else {
+                throw IllegalArgumentException("No playable source found")
+            }
+            
+            prepare()
+            
+            initAudioEffects(audioSessionId)
+            
+            start()
+            
+            _duration.value = duration.toLong()
+            
+            setOnCompletionListener {
+                onTrackCompleted()
+            }
+        }
+    }
+
+    fun togglePlayPause() {
+        val player = mediaPlayer
+        if (player != null) {
+            if (player.isPlaying) {
+                player.pause()
+                _isPlaying.value = false
+                stopProgressTracker()
+            } else {
+                player.start()
+                _isPlaying.value = true
+                startProgressTracker()
+            }
+        } else {
+            // Nothing loaded, play current track
+            val current = _currentTrack.value
+            if (current != null) {
+                playTrack(current)
+            }
+        }
+    }
+
+    fun skipToNext() {
+        if (activeQueue.isEmpty()) return
+        var nextIndex = currentQueueIndex + 1
+        if (nextIndex >= activeQueue.size) {
+            nextIndex = 0
+        }
+        playTrack(activeQueue[nextIndex])
+    }
+
+    fun skipToPrevious() {
+        if (activeQueue.isEmpty()) return
+        
+        // If current position is > 3s, restart song instead
+        val currentPos = _currentPosition.value
+        if (currentPos > 3000L) {
+            seekTo(0L)
+            return
+        }
+
+        var prevIndex = currentQueueIndex - 1
+        if (prevIndex < 0) {
+            prevIndex = activeQueue.size - 1
+        }
+        playTrack(activeQueue[prevIndex])
+    }
+
+    fun seekTo(positionMs: Long) {
+        mediaPlayer?.let { player ->
+            try {
+                player.seekTo(positionMs.toInt())
+                _currentPosition.value = positionMs
+            } catch (e: Exception) {
+                Log.e(tag, "Seek failed: ${e.message}")
+            }
+        }
+    }
+
+    fun toggleShuffle() {
+        _isShuffleEnabled.value = !_isShuffleEnabled.value
+        updateQueueList()
+    }
+
+    fun toggleRepeat() {
+        _isRepeatEnabled.value = !_isRepeatEnabled.value
+    }
+
+    fun toggleHiResEngine() {
+        _isHiResEngineEnabled.value = !_isHiResEngineEnabled.value
+        // Re-configure player with updated audio path if playing
+        val playing = _currentTrack.value
+        if (playing != null && _isPlaying.value) {
+            val currentPos = _currentPosition.value
+            playTrack(playing)
+            seekTo(currentPos)
+        }
+    }
+
+    fun setDacSampleRate(rate: Int) {
+        _dacSampleRate.value = rate
+    }
+
+    fun setDacBitDepth(depth: Int) {
+        _dacBitDepth.value = depth
+    }
+
+    fun setResamplingFilter(filter: String) {
+        _resamplingFilter.value = filter
+    }
+
+    fun setAudioBackend(backend: String) {
+        _audioBackend.value = backend
+    }
+
+    fun setDitherMode(mode: String) {
+        _ditherMode.value = mode
+    }
+
+    fun setPerformanceProfile(profile: String) {
+        _performanceProfile.value = profile
+    }
+
+    fun setBufferSize(size: Int) {
+        _bufferSize.value = size
+    }
+
+    private fun onTrackCompleted() {
+        if (_isRepeatEnabled.value) {
+            val current = _currentTrack.value
+            if (current != null) {
+                playTrack(current)
+            }
+        } else {
+            skipToNext()
+        }
+    }
+
+    private fun stopCurrent() {
+        stopProgressTracker()
+        try {
+            mediaPlayer?.let { player ->
+                if (player.isPlaying) {
+                    player.stop()
+                }
+                player.release()
+            }
+            mediaPlayer = null
+        } catch (e: Exception) {
+            Log.e(tag, "Error releasing media player: ${e.message}")
+        }
+        _isPlaying.value = false
+        _currentPosition.value = 0L
+    }
+
+    // --- Audio Effects (Equalizer, Bass Boost, Virtualizer) ---
+
+    private fun initAudioEffects(audioSessionId: Int) {
+        try {
+            equalizer?.release()
+            bassBoost?.release()
+            virtualizer?.release()
+
+            equalizer = Equalizer(0, audioSessionId).apply {
+                enabled = true
+            }
+
+            bassBoost = BassBoost(0, audioSessionId).apply {
+                enabled = true
+            }
+
+            virtualizer = Virtualizer(0, audioSessionId).apply {
+                enabled = true
+            }
+
+            // Sync current configurations to hardware
+            applyEqualizerBandsToHardware()
+            applyBassBoostToHardware()
+            applyVirtualizerToHardware()
+
+            Log.d(tag, "Audio Effects successfully bound to session: $audioSessionId")
+        } catch (e: Exception) {
+            Log.e(tag, "Equalizer hardware creation failed: ${e.message}. Using safe software simulation mode.")
+        }
+    }
+
+    fun setEqualizerBandGain(bandIndex: Int, dbGain: Int) {
+        val updatedBands = _eqBands.value.toMutableList()
+        if (bandIndex in updatedBands.indices) {
+            updatedBands[bandIndex] = dbGain.coerceIn(-15, 15)
+            _eqBands.value = updatedBands
+            _activePreset.value = "Custom"
+            applyEqualizerBandsToHardware()
+        }
+    }
+
+    fun applyPreset(presetName: String) {
+        _activePreset.value = presetName
+        val presetBands = when (presetName) {
+            "Bass Booster" -> listOf(10, 6, 0, -2, -4)
+            "Acoustic" -> listOf(4, 2, 0, 3, 5)
+            "Electronic" -> listOf(8, 4, -2, 3, 7)
+            "Vocal Booster" -> listOf(-4, -2, 8, 4, -2)
+            "Classical" -> listOf(3, 1, 0, 2, 4)
+            "Flat" -> listOf(0, 0, 0, 0, 0)
+            else -> listOf(0, 0, 0, 0, 0)
+        }
+        _eqBands.value = presetBands
+        applyEqualizerBandsToHardware()
+    }
+
+    fun setBassBoost(strength: Int) {
+        _bassBoostStrength.value = strength.coerceIn(0, 100)
+        applyBassBoostToHardware()
+    }
+
+    fun setVirtualizer(strength: Int) {
+        _virtualizerStrength.value = strength.coerceIn(0, 100)
+        applyVirtualizerToHardware()
+    }
+
+    private fun applyEqualizerBandsToHardware() {
+        equalizer?.let { eq ->
+            try {
+                val bandsCount = eq.numberOfBands.toInt()
+                val minLevel = eq.bandLevelRange[0]
+                val maxLevel = eq.bandLevelRange[1]
+                _eqBands.value.forEachIndexed { i, dbGain ->
+                    if (i < bandsCount) {
+                        // Android Equalizer uses millibels
+                        val millibels = (dbGain * 100).toShort().coerceIn(minLevel, maxLevel)
+                        eq.setBandLevel(i.toShort(), millibels)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(tag, "Error applying hardware EQ bands: ${e.message}")
+            }
+        }
+    }
+
+    private fun applyBassBoostToHardware() {
+        bassBoost?.let { boost ->
+            try {
+                // Android BassBoost strength ranges 0 to 1000 millibel equivalents
+                val strengthValue = (_bassBoostStrength.value * 10).toShort()
+                boost.setStrength(strengthValue)
+            } catch (e: Exception) {
+                Log.e(tag, "Error applying hardware BassBoost: ${e.message}")
+            }
+        }
+    }
+
+    private fun applyVirtualizerToHardware() {
+        virtualizer?.let { virt ->
+            try {
+                val strengthValue = (_virtualizerStrength.value * 10).toShort()
+                virt.setStrength(strengthValue)
+            } catch (e: Exception) {
+                Log.e(tag, "Error applying hardware Virtualizer: ${e.message}")
+            }
+        }
+    }
+
+    // --- Progress Tracker ---
+
+    private fun startProgressTracker() {
+        stopProgressTracker()
+        progressJob = scope.launch(Dispatchers.Main) {
+            while (isActive) {
+                mediaPlayer?.let { player ->
+                    try {
+                        if (player.isPlaying) {
+                            _currentPosition.value = player.currentPosition.toLong()
+                        }
+                    } catch (e: Exception) {
+                        // Ignore periodic exceptions during state change
+                    }
+                }
+                delay(250)
+            }
+        }
+    }
+
+    private fun stopProgressTracker() {
+        progressJob?.cancel()
+        progressJob = null
+    }
+
+    fun release() {
+        stopCurrent()
+        equalizer?.release()
+        bassBoost?.release()
+        virtualizer?.release()
+        scope.cancel()
+    }
+}

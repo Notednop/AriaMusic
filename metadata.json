@@ -1,0 +1,6 @@
+{
+  "name": "Aria",
+  "description": "Native Hi-Res Music Player featuring an Apple Music-inspired visual design, offline audio playback, local media scanning, custom audio engine configurations, and a 5-band active Equalizer.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
