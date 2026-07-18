@@ -1,6 +1,16 @@
 package com.example
 
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
+import android.hardware.usb.UsbConstants
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbManager
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -18,6 +28,10 @@ import androidx.compose.material3.*
 import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
@@ -26,6 +40,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.example.ui.MusicViewModel
 import com.example.ui.components.AudioQualityDialog
 import com.example.ui.components.EqualizerPanel
@@ -34,6 +50,8 @@ import com.example.ui.components.MiniPlayer
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.LibraryScreen
 import com.example.ui.theme.MyApplicationTheme
+
+private const val ACTION_USB_DAC_PERMISSION = "com.example.USB_DAC_PERMISSION"
 
 class MainActivity : ComponentActivity() {
     private val musicViewModel: MusicViewModel by viewModels()
@@ -81,6 +99,113 @@ fun MainAppScreen(viewModel: MusicViewModel) {
     val playbackError by viewModel.playbackError.collectAsState()
 
     val context = LocalContext.current
+    var hasFloatingPermission by remember {
+        mutableStateOf(
+            android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.M ||
+                Settings.canDrawOverlays(context)
+        )
+    }
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
+    var usbDacDevice by remember { mutableStateOf<UsbDevice?>(null) }
+    var hasUsbDacPermission by remember { mutableStateOf(false) }
+    val hasUsbDacConnected = usbDacDevice != null
+    val hasDacBypassPermission = hasFloatingPermission || (hasUsbDacConnected && hasUsbDacPermission)
+
+    fun UsbDevice.isUsbAudioDac(): Boolean {
+        if (deviceClass == UsbConstants.USB_CLASS_AUDIO) return true
+        return (0 until interfaceCount).any { index ->
+            getInterface(index).interfaceClass == UsbConstants.USB_CLASS_AUDIO
+        }
+    }
+
+    fun refreshUsbDacPermission() {
+        usbDacDevice = usbManager.deviceList.values.firstOrNull { it.isUsbAudioDac() }
+        hasUsbDacPermission = usbDacDevice?.let { usbManager.hasPermission(it) } ?: false
+    }
+
+    fun requestUsbDacPermission() {
+        val device = usbDacDevice ?: usbManager.deviceList.values.firstOrNull { it.isUsbAudioDac() }
+        if (device == null) {
+            Toast.makeText(context, "USB DAC belum terdeteksi.", Toast.LENGTH_LONG).show()
+            refreshUsbDacPermission()
+            return
+        }
+        if (usbManager.hasPermission(device)) {
+            refreshUsbDacPermission()
+            Toast.makeText(context, "Izin USB DAC sudah aktif.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val permissionIntent = PendingIntent.getBroadcast(
+            context,
+            0,
+            Intent(ACTION_USB_DAC_PERMISSION).setPackage(context.packageName),
+            PendingIntent.FLAG_IMMUTABLE
+        )
+        usbManager.requestPermission(device, permissionIntent)
+    }
+
+    fun refreshFloatingPermission() {
+        hasFloatingPermission = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.M ||
+            Settings.canDrawOverlays(context)
+    }
+
+    fun setFloatingDacOverlayVisible(visible: Boolean) {
+        val serviceIntent = Intent(context, FloatingDacService::class.java)
+        if (visible && hasFloatingPermission) {
+            context.startService(serviceIntent)
+        } else {
+            context.stopService(serviceIntent)
+        }
+    }
+
+    fun requestFloatingPermission() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:${context.packageName}")
+            )
+            context.startActivity(intent)
+        }
+        refreshFloatingPermission()
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        refreshUsbDacPermission()
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                refreshFloatingPermission()
+                refreshUsbDacPermission()
+                if (!hasFloatingPermission) setFloatingDacOverlayVisible(false)
+            }
+        }
+        val usbReceiver = object : BroadcastReceiver() {
+            override fun onReceive(receiverContext: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    ACTION_USB_DAC_PERMISSION,
+                    UsbManager.ACTION_USB_DEVICE_ATTACHED,
+                    UsbManager.ACTION_USB_DEVICE_DETACHED -> refreshUsbDacPermission()
+                }
+            }
+        }
+        val usbFilter = IntentFilter().apply {
+            addAction(ACTION_USB_DAC_PERMISSION)
+            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(usbReceiver, usbFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            context.registerReceiver(usbReceiver, usbFilter)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            context.unregisterReceiver(usbReceiver)
+        }
+    }
+
     LaunchedEffect(playbackError) {
         playbackError?.let {
             Toast.makeText(context, it, Toast.LENGTH_LONG).show()
@@ -196,7 +321,25 @@ fun MainAppScreen(viewModel: MusicViewModel) {
                     ditherMode = ditherMode,
                     performanceProfile = performanceProfile,
                     bufferSize = bufferSize,
-                    onHiResToggle = { viewModel.toggleHiResEngine() },
+                    hasFloatingPermission = hasFloatingPermission,
+                    hasUsbDacConnected = hasUsbDacConnected,
+                    hasUsbDacPermission = hasUsbDacPermission,
+                    onRequestFloatingPermission = { requestFloatingPermission() },
+                    onRequestUsbDacPermission = { requestUsbDacPermission() },
+                    onHiResToggle = {
+                        refreshUsbDacPermission()
+                        if (isHiResEngineEnabled || hasDacBypassPermission) {
+                            viewModel.toggleHiResEngine()
+                            setFloatingDacOverlayVisible(!isHiResEngineEnabled)
+                        } else {
+                            Toast.makeText(
+                                context,
+                                "Izinkan USB DAC atau floating/overlay dulu untuk DAC bypass.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            if (hasUsbDacConnected) requestUsbDacPermission() else requestFloatingPermission()
+                        }
+                    },
                     onSampleRateChange = { viewModel.setDacSampleRate(it) },
                     onBitDepthChange = { viewModel.setDacBitDepth(it) },
                     onFilterChange = { viewModel.setResamplingFilter(it) },
