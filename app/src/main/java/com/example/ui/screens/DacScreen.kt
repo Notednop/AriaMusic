@@ -44,6 +44,11 @@ fun DacScreen(
     ditherMode: String,
     performanceProfile: String,
     bufferSize: Int,
+    hasFloatingPermission: Boolean,
+    hasUsbDacConnected: Boolean,
+    hasUsbDacPermission: Boolean,
+    onRequestFloatingPermission: () -> Unit,
+    onRequestUsbDacPermission: () -> Unit,
     onHiResToggle: () -> Unit,
     onSampleRateChange: (Int) -> Unit,
     onBitDepthChange: (Int) -> Unit,
@@ -101,7 +106,87 @@ fun DacScreen(
             Spacer(modifier = Modifier.height(20.dp))
         }
 
-        // 3. Bit-Perfect DAC Bypass Toggle Switch Card
+
+        // 3. DAC bypass permission card for USB DAC and UAPP-style overlay controls
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(20.dp))
+                    .testTag("floating_permission_card"),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (hasUsbDacPermission || hasFloatingPermission) Color(0xFF101611) else Color(0xFF161012)
+                ),
+                shape = RoundedCornerShape(20.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (hasUsbDacPermission || hasFloatingPermission) Color(0xFF34C759).copy(alpha = 0.15f)
+                                else Color(0xFFE23E57).copy(alpha = 0.15f)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (hasUsbDacPermission || hasFloatingPermission) Icons.Default.CheckCircle else Icons.Default.Usb,
+                            contentDescription = "DAC bypass permission status",
+                            tint = if (hasUsbDacPermission || hasFloatingPermission) Color(0xFF34C759) else Color(0xFFE23E57),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(16.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "DAC Bypass Permission",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Text(
+                            text = when {
+                                hasUsbDacConnected && hasUsbDacPermission -> "USB DAC terpasang dan izin bypass aktif."
+                                hasUsbDacConnected -> "USB DAC terdeteksi. Ketuk Izinkan DAC untuk bypass langsung."
+                                hasFloatingPermission -> "Izin overlay aktif untuk kontrol DAC bypass seperti UAPP."
+                                else -> "Pasang USB DAC atau aktifkan izin floating/overlay untuk bypass."
+                            },
+                            color = if (hasUsbDacPermission || hasFloatingPermission) Color(0xFF34C759) else Color.Gray,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+
+                    if (hasUsbDacConnected && !hasUsbDacPermission) {
+                        Button(
+                            onClick = onRequestUsbDacPermission,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE23E57)),
+                            modifier = Modifier.testTag("request_usb_dac_permission_button")
+                        ) {
+                            Text("Izinkan DAC")
+                        }
+                    } else if (!hasFloatingPermission) {
+                        Button(
+                            onClick = onRequestFloatingPermission,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE23E57)),
+                            modifier = Modifier.testTag("request_floating_permission_button")
+                        ) {
+                            Text("Floating")
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(20.dp))
+        }
+
+        // 4. Bit-Perfect DAC Bypass Toggle Switch Card
         item {
             Card(
                 modifier = Modifier
@@ -147,7 +232,10 @@ fun DacScreen(
                             style = MaterialTheme.typography.bodyLarge
                         )
                         Text(
-                            text = if (isHiResEngineActive) "Direct Hardware Mode Active" else "Bypass mode disabled (Standard Mixer)",
+                            text = if (isHiResEngineActive) "Direct Hardware Mode Active"
+                                   else if (hasUsbDacConnected && !hasUsbDacPermission) "USB DAC permission required for bypass"
+                                   else if (!hasFloatingPermission) "DAC/overlay permission required for bypass"
+                                   else "Bypass mode disabled (Standard Mixer)",
                             color = if (isHiResEngineActive) Color(0xFFE23E57) else Color.Gray,
                             style = MaterialTheme.typography.bodySmall
                         )
@@ -169,7 +257,7 @@ fun DacScreen(
             Spacer(modifier = Modifier.height(20.dp))
         }
 
-        // 4. Output Stream Properties Controls
+        // 5. Output Stream Properties Controls
         item {
             Text(
                 text = "STREAM QUALITY SYNTHESIS",
@@ -310,7 +398,7 @@ fun DacScreen(
             Spacer(modifier = Modifier.height(20.dp))
         }
 
-        // 5. Advanced Engine Controls
+        // 6. Advanced Engine Controls
         item {
             Text(
                 text = "ADVANCED HARDWARE DRIVER LEVEL SETUP",
