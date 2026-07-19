@@ -8,6 +8,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -64,6 +65,7 @@ fun DacScreen(
     clockSourceInfo: String,
     usbEngineError: String?,
     onRequestFloatingPermission: () -> Unit,
+    onRequestUsbPermission: () -> Unit,
     onHiResToggle: () -> Unit,
     onSampleRateChange: (Int) -> Unit,
     onBitDepthChange: (Int) -> Unit,
@@ -217,6 +219,59 @@ fun DacScreen(
 
                         HorizontalDivider(color = Color(0xFF1F1F1F), modifier = Modifier.padding(vertical = 12.dp))
 
+                        // Dynamic USB Permission Section
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Text("Permission Status", color = Color.Gray, fontSize = 11.sp)
+                                Text(
+                                    text = if (connectedDac.isPermissionGranted) "GRANTED (Direct access active)" else "DENIED / PENDING AUTHORIZATION",
+                                    color = if (connectedDac.isPermissionGranted) Color(0xFF34C759) else Color(0xFFE23E57),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp
+                                )
+                            }
+                            if (!connectedDac.isPermissionGranted) {
+                                Button(
+                                    onClick = onRequestUsbPermission,
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE23E57)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.testTag("request_usb_permission_button")
+                                ) {
+                                    Text("Grant Permission", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+
+                        HorizontalDivider(color = Color(0xFF1F1F1F), modifier = Modifier.padding(vertical = 12.dp))
+
+                        // USB Interfaces list
+                        Text("Active USB Interfaces", color = Color.Gray, fontSize = 11.sp)
+                        if (connectedDac.usbInterfaces.isNotEmpty()) {
+                            connectedDac.usbInterfaces.forEach { interf ->
+                                Text("• $interf", color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(vertical = 1.dp))
+                            }
+                        } else {
+                            Text("No interfaces available (needs permission)", color = Color.LightGray, fontSize = 11.sp)
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Audio Endpoints list
+                        Text("Active Audio Endpoints", color = Color.Gray, fontSize = 11.sp)
+                        if (connectedDac.audioEndpoints.isNotEmpty()) {
+                            connectedDac.audioEndpoints.forEach { ep ->
+                                Text("• $ep", color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(vertical = 1.dp))
+                            }
+                        } else {
+                            Text("No endpoints available (needs permission)", color = Color.LightGray, fontSize = 11.sp)
+                        }
+
+                        HorizontalDivider(color = Color(0xFF1F1F1F), modifier = Modifier.padding(vertical = 12.dp))
+
                         Text("Supported Sample Rates", color = Color.Gray, fontSize = 11.sp)
                         Text(
                             text = connectedDac.supportedSampleRates.joinToString(", ") { "${it / 1000.0} kHz" },
@@ -224,6 +279,31 @@ fun DacScreen(
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 12.sp
                         )
+
+                        HorizontalDivider(color = Color(0xFF1F1F1F), modifier = Modifier.padding(vertical = 12.dp))
+
+                        // Driver Error and Warning Logs
+                        Text("Driver & USB Log Stream", color = Color.Gray, fontSize = 11.sp)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(90.dp)
+                                .background(Color(0xFF090909), RoundedCornerShape(8.dp))
+                                .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(8.dp))
+                                .padding(8.dp)
+                        ) {
+                            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                                if (connectedDac.errorLogs.isNotEmpty()) {
+                                    items(connectedDac.errorLogs) { logLine ->
+                                        Text(logLine, color = Color.LightGray, fontSize = 10.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                                    }
+                                } else {
+                                    item {
+                                        Text("No logs yet. Stream idle.", color = Color.Gray, fontSize = 10.sp)
+                                    }
+                                }
+                            }
+                        }
 
                         Spacer(modifier = Modifier.height(8.dp))
 

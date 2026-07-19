@@ -23,6 +23,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -195,6 +196,16 @@ fun FullPlayer(
                     )
             )
 
+            val embeddedImageBitmap = remember(track.embeddedArt) {
+                track.embeddedArt?.let { bytes ->
+                    try {
+                        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+            }
+
             Box(
                 modifier = Modifier
                     .size(artSize)
@@ -217,7 +228,14 @@ fun FullPlayer(
                         )
                     )
             ) {
-                if (track.coverResId != null) {
+                if (embeddedImageBitmap != null) {
+                    Image(
+                        bitmap = embeddedImageBitmap,
+                        contentDescription = "Full Album Art",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else if (track.coverResId != null) {
                     Image(
                         painter = painterResource(id = track.coverResId),
                         contentDescription = "Full Album Art",
@@ -644,13 +662,30 @@ fun FullPlayer(
                                     .padding(10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
+                                val itemEmbeddedImage = remember(item.embeddedArt) {
+                                    item.embeddedArt?.let { bytes ->
+                                        try {
+                                            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+                                        } catch (e: Exception) {
+                                            null
+                                        }
+                                    }
+                                }
+
                                 Box(
                                     modifier = Modifier
                                         .size(36.dp)
                                         .clip(RoundedCornerShape(4.dp))
                                         .background(Color.DarkGray)
                                 ) {
-                                    if (item.coverResId != null) {
+                                    if (itemEmbeddedImage != null) {
+                                        Image(
+                                            bitmap = itemEmbeddedImage,
+                                            contentDescription = "Art",
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    } else if (item.coverResId != null) {
                                         Image(
                                             painter = painterResource(id = item.coverResId),
                                             contentDescription = "Art",

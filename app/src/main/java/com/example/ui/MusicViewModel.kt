@@ -227,6 +227,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         audioEngine.usbDacManager.disconnectDac()
     }
 
+    fun requestUsbPermission() {
+        audioEngine.requestUsbPermission()
+    }
+
     override fun onCleared() {
         super.onCleared()
         audioEngine.release()

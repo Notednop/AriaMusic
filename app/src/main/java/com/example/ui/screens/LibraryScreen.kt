@@ -19,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -215,6 +216,16 @@ fun LibraryScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Left artwork
+                    val libEmbeddedImage = remember(track.embeddedArt) {
+                        track.embeddedArt?.let { bytes ->
+                            try {
+                                android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+                            } catch (e: Exception) {
+                                null
+                            }
+                        }
+                    }
+
                     Box(
                         modifier = Modifier
                             .size(56.dp)
@@ -222,7 +233,14 @@ fun LibraryScreen(
                             .background(Color(0xFF121212)),
                         contentAlignment = Alignment.Center
                     ) {
-                        if (track.coverResId != null) {
+                        if (libEmbeddedImage != null) {
+                            Image(
+                                bitmap = libEmbeddedImage,
+                                contentDescription = "Cover",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else if (track.coverResId != null) {
                             Image(
                                 painter = painterResource(id = track.coverResId),
                                 contentDescription = "Cover",

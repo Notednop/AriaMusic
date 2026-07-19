@@ -35,8 +35,56 @@ data class Track(
     val sampleRate: Int = 44100,
     val bitDepth: Int = 16,
     val format: String = "WAV",
-    val albumArtist: String = ""
-)
+    val albumArtist: String = "",
+    val embeddedArt: ByteArray? = null
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+
+        other as Track
+
+        if (id != other.id) return false
+        if (title != other.title) return false
+        if (artist != other.artist) return false
+        if (album != other.album) return false
+        if (durationMs != other.durationMs) return false
+        if (filePath != other.filePath) return false
+        if (uri != other.uri) return false
+        if (isHiRes != other.isHiRes) return false
+        if (audioQualityInfo != other.audioQualityInfo) return false
+        if (coverResId != other.coverResId) return false
+        if (sampleRate != other.sampleRate) return false
+        if (bitDepth != other.bitDepth) return false
+        if (format != other.format) return false
+        if (albumArtist != other.albumArtist) return false
+        if (embeddedArt != null) {
+            if (other.embeddedArt == null) return false
+            if (!embeddedArt.contentEquals(other.embeddedArt)) return false
+        } else if (other.embeddedArt != null) return false
+
+        return true
+    }
+
+    override fun hashCode(): Int {
+        var result = id.hashCode()
+        result = 31 * result + title.hashCode()
+        result = 31 * result + artist.hashCode()
+        result = 31 * result + album.hashCode()
+        result = 31 * result + durationMs.hashCode()
+        result = 31 * result + (filePath?.hashCode() ?: 0)
+        result = 31 * result + (uri?.hashCode() ?: 0)
+        result = 31 * result + isHiRes.hashCode()
+        result = 31 * result + audioQualityInfo.hashCode()
+        result = 31 * result + (coverResId ?: 0)
+        result = 31 * result + sampleRate
+        result = 31 * result + bitDepth
+        result = 31 * result + format.hashCode()
+        result = 31 * result + albumArtist.hashCode()
+        result = 31 * result + (embeddedArt?.contentHashCode() ?: 0)
+        return result
+    }
+}
 
 class AudioEngine(private val context: Context) {
     private val tag = "AudioEngine"
@@ -393,28 +441,67 @@ class AudioEngine(private val context: Context) {
 
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idCol)
-                    val title = cursor.getString(titleCol)
-                    val artist = cursor.getString(artistCol)
-                    val album = cursor.getString(albumCol)
+                    val rawTitle = cursor.getString(titleCol) ?: "Unknown Track"
+                    val rawArtist = cursor.getString(artistCol) ?: "Unknown Artist"
+                    val rawAlbum = cursor.getString(albumCol) ?: "Unknown Album"
                     val duration = cursor.getLong(durationCol)
                     val path = cursor.getString(dataCol)
                     val uri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
-                    val albumArtist = if (albumArtistCol != -1) cursor.getString(albumArtistCol) ?: artist else artist
+                    val rawAlbumArtist = if (albumArtistCol != -1) cursor.getString(albumArtistCol) ?: rawArtist else rawArtist
+
+                    var embeddedCover: ByteArray? = null
+                    var extractedTitle = rawTitle
+                    var extractedArtist = rawArtist
+                    var extractedAlbum = rawAlbum
+                    var extractedAlbumArtist = rawAlbumArtist
+
+                    // Retrieve embedded metadata and cover artwork safely with MediaMetadataRetriever
+                    val retriever = android.media.MediaMetadataRetriever()
+                    try {
+                        if (path != null && File(path).exists()) {
+                            retriever.setDataSource(path)
+                        } else {
+                            retriever.setDataSource(context, uri)
+                        }
+
+                        retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_TITLE)?.let {
+                            if (it.isNotBlank()) extractedTitle = it
+                        }
+                        retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ARTIST)?.let {
+                            if (it.isNotBlank()) extractedArtist = it
+                        }
+                        retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ALBUM)?.let {
+                            if (it.isNotBlank()) extractedAlbum = it
+                        }
+                        retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST)?.let {
+                            if (it.isNotBlank()) extractedAlbumArtist = it
+                        }
+
+                        embeddedCover = retriever.embeddedPicture
+                    } catch (e: Exception) {
+                        Log.w(tag, "MediaMetadataRetriever warning for $rawTitle: ${e.message}")
+                    } finally {
+                        try {
+                            retriever.release()
+                        } catch (e: Exception) {}
+                    }
 
                     val isHiResFormat = path?.endsWith(".flac", true) == true || 
                                       path?.endsWith(".wav", true) == true ||
-                                      title.contains("hires", true)
+                                      path?.endsWith(".dsf", true) == true ||
+                                      path?.endsWith(".dff", true) == true ||
+                                      extractedTitle.contains("hires", true)
 
                     val rate = if (isHiResFormat) 96000 else 44100
                     val bits = if (isHiResFormat) 24 else 16
-                    val fmt = path?.substringAfterLast('.')?.uppercase() ?: "MP3"
+                    val fmt = path?.substringAfterLast('.')?.uppercase() ?: "WAV"
 
                     scanList.add(
                         Track(
                             id = "local_$id",
-                            title = title,
-                            artist = if (artist == "<unknown>") "Local Offline Artist" else artist,
-                            album = if (album == "<unknown>") "Offline Library" else album,
+                            title = extractedTitle,
+                            artist = if (extractedArtist == "<unknown>") "Local Offline Artist" else extractedArtist,
+                            album = if (extractedAlbum == "<unknown>") "Offline Library" else extractedAlbum,
                             durationMs = duration,
                             filePath = path,
                             uri = uri,
@@ -427,7 +514,8 @@ class AudioEngine(private val context: Context) {
                             sampleRate = rate,
                             bitDepth = bits,
                             format = fmt,
-                            albumArtist = if (albumArtist == "<unknown>") "Local Offline Artist" else albumArtist
+                            albumArtist = if (extractedAlbumArtist == "<unknown>") "Local Offline Artist" else extractedAlbumArtist,
+                            embeddedArt = embeddedCover
                         )
                     )
                 }
@@ -473,7 +561,8 @@ class AudioEngine(private val context: Context) {
                 // EXCLUSIVE DIRECT USB PLAYBACK ROUTE
                 Log.i(tag, "Exclusive USB DAC Connected! Routing direct stream bypassing AudioFlinger mixer.")
                 try {
-                    usbAudioEngine.startStream(track, dac)
+                    val fd = usbDacManager.getConnectedDeviceFileDescriptor()
+                    usbAudioEngine.startStream(track, dac, fd)
 
                     _dacSampleRate.value = usbAudioEngine.activeSampleRate.value
                     _dacBitDepth.value = usbAudioEngine.activeBitDepth.value
@@ -895,6 +984,10 @@ class AudioEngine(private val context: Context) {
     private fun stopProgressTracker() {
         progressJob?.cancel()
         progressJob = null
+    }
+
+    fun requestUsbPermission() {
+        usbDacManager.requestPermissionForConnected()
     }
 
     fun release() {

@@ -82,7 +82,7 @@ class UsbAudioEngine(private val context: Context) {
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     // Native Interface methods
-    private external fun nativeInit(initialCapacity: Int): Boolean
+    private external fun nativeInit(initialCapacity: Int, usbFd: Int): Boolean
     private external fun nativeRelease()
     private external fun nativeSetParameters(sampleRate: Int, bitDepth: Int, bufferSize: Int)
     private external fun nativeStart()
@@ -90,7 +90,7 @@ class UsbAudioEngine(private val context: Context) {
     private external fun nativeWrite(data: ByteArray, offset: Int, length: Int): Int
     private external fun nativeGetBufferUnderruns(): Int
 
-    fun startStream(track: Track, connectedDac: UsbDacInfo?) {
+    fun startStream(track: Track, connectedDac: UsbDacInfo?, usbFd: Int = -1) {
         stopStream()
 
         val targetRate = if (_isBitPerfectEnabled.value) track.sampleRate else 48000
@@ -118,7 +118,7 @@ class UsbAudioEngine(private val context: Context) {
         // Initialize JNI native layer
         if (isNativeLibraryLoaded) {
             try {
-                nativeInit(_bufferSize.value * 4 * 2) // ring buffer capacity
+                nativeInit(_bufferSize.value * 4 * 2, usbFd) // ring buffer capacity
                 nativeSetParameters(targetRate, targetDepth, _bufferSize.value)
                 nativeStart()
             } catch (e: Exception) {
@@ -222,7 +222,7 @@ class UsbAudioEngine(private val context: Context) {
             } catch (e: Exception) {
                 Log.e(tag, "Playback thread exception: ${e.message}")
                 _engineError.value = "Error: Stream failure on USB endpoint. Reconnecting."
-                recoverPlayback(track, connectedDac)
+                recoverPlayback(track, connectedDac, usbFd)
             } finally {
                 try {
                     inputStream?.close()
@@ -231,11 +231,11 @@ class UsbAudioEngine(private val context: Context) {
         }
     }
 
-    private fun recoverPlayback(track: Track, connectedDac: UsbDacInfo?) {
+    private fun recoverPlayback(track: Track, connectedDac: UsbDacInfo?, usbFd: Int = -1) {
         scope.launch {
             Log.w(tag, "Initiating USB audio pipeline auto-recovery...")
             delay(1000)
-            startStream(track, connectedDac)
+            startStream(track, connectedDac, usbFd)
         }
     }
 

@@ -17,8 +17,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.runtime.remember
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -203,13 +205,30 @@ fun HomeScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Small thumbnail
+                    val homeEmbeddedImage = remember(track.embeddedArt) {
+                        track.embeddedArt?.let { bytes ->
+                            try {
+                                android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+                            } catch (e: Exception) {
+                                null
+                            }
+                        }
+                    }
+
                     Box(
                         modifier = Modifier
                             .size(52.dp)
                             .clip(RoundedCornerShape(8.dp))
                             .background(Color.DarkGray)
                     ) {
-                        if (track.coverResId != null) {
+                        if (homeEmbeddedImage != null) {
+                            Image(
+                                bitmap = homeEmbeddedImage,
+                                contentDescription = "Cover",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                              )
+                        } else if (track.coverResId != null) {
                             Image(
                                 painter = painterResource(id = track.coverResId),
                                 contentDescription = "Cover",

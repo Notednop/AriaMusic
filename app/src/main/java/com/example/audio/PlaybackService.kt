@@ -121,7 +121,9 @@ class PlaybackService : Service() {
 
         // Large artwork bitmap with programmatic safe fallback to avoid XML vector decoding crashes
         val albumArt: Bitmap = try {
-            if (track.coverResId != null) {
+            if (track.embeddedArt != null) {
+                BitmapFactory.decodeByteArray(track.embeddedArt, 0, track.embeddedArt.size) ?: createPlaceholderBitmap()
+            } else if (track.coverResId != null) {
                 BitmapFactory.decodeResource(resources, track.coverResId) ?: createPlaceholderBitmap()
             } else {
                 createPlaceholderBitmap()

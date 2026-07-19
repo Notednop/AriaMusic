@@ -288,6 +288,7 @@ fun MainAppScreen(viewModel: MusicViewModel) {
                     clockSourceInfo = clockSourceInfo,
                     usbEngineError = usbEngineError,
                     onRequestFloatingPermission = { requestFloatingPermission() },
+                    onRequestUsbPermission = { viewModel.requestUsbPermission() },
                     onHiResToggle = {
                         if (isHiResEngineEnabled || hasFloatingPermission) {
                             viewModel.toggleHiResEngine()
