@@ -61,21 +61,33 @@ class PlaybackService : Service() {
 
     /**
      * Promotes the service to Foreground and displays/updates the playback control notification.
+     * Implements try-catch blocks to handle background starting restrictions on modern Android.
      */
     fun showNotification(track: Track, isPlaying: Boolean) {
         val notification = buildMediaNotification(track, isPlaying)
 
-        if (!isForegroundActive) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(notificationId, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+        try {
+            if (!isForegroundActive) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    startForeground(notificationId, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+                } else {
+                    startForeground(notificationId, notification)
+                }
+                isForegroundActive = true
+                Log.i(tag, "Service promoted to Foreground.")
             } else {
-                startForeground(notificationId, notification)
+                val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                notificationManager.notify(notificationId, notification)
             }
-            isForegroundActive = true
-            Log.i(tag, "Service promoted to Foreground.")
-        } else {
-            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            notificationManager.notify(notificationId, notification)
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to start service as Foreground (strict background start rules): ${e.message}")
+            // Safe fallback: display standard notifications without foreground status to prevent crash
+            try {
+                val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                notificationManager.notify(notificationId, notification)
+            } catch (ex: Exception) {
+                Log.e(tag, "Safe fallback notification also failed: ${ex.message}")
+            }
         }
     }
 
@@ -84,8 +96,12 @@ class PlaybackService : Service() {
      */
     fun hideNotification() {
         if (isForegroundActive) {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
+            try {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            } catch (e: Exception) {
+                Log.e(tag, "Error stopping foreground status: ${e.message}")
+            }
             isForegroundActive = false
             Log.i(tag, "Service demoted from Foreground.")
         }
@@ -103,14 +119,19 @@ class PlaybackService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
         )
 
-        // Large artwork bitmap
-        val albumArt: Bitmap = if (track.coverResId != null) {
-            BitmapFactory.decodeResource(resources, track.coverResId)
-        } else {
-            BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher)
+        // Large artwork bitmap with programmatic safe fallback to avoid XML vector decoding crashes
+        val albumArt: Bitmap = try {
+            if (track.coverResId != null) {
+                BitmapFactory.decodeResource(resources, track.coverResId) ?: createPlaceholderBitmap()
+            } else {
+                createPlaceholderBitmap()
+            }
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to decode artwork resource, using custom safe placeholder: ${e.message}")
+            createPlaceholderBitmap()
         }
 
-        // Standard notification with action buttons which do not require additional dependency libraries
+        // Standard notification with action buttons
         val builder = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setLargeIcon(albumArt)
@@ -137,6 +158,21 @@ class PlaybackService : Service() {
         }
 
         return builder.build()
+    }
+
+    /**
+     * Resiliently creates a programmatical solid color bitmap to prevent Vector-to-Bitmap decoding crashes.
+     */
+    private fun createPlaceholderBitmap(): Bitmap {
+        return try {
+            val bitmap = Bitmap.createBitmap(128, 128, Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(bitmap)
+            canvas.drawColor(android.graphics.Color.DKGRAY)
+            bitmap
+        } catch (e: Exception) {
+            // Unlikely to crash but we want absolute resiliency
+            Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+        }
     }
 
     override fun onDestroy() {
