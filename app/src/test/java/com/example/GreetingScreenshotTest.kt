@@ -36,7 +36,8 @@ class GreetingScreenshotTest {
         coverResId = R.drawable.img_cover_ambient,
         sampleRate = 96000,
         bitDepth = 24,
-        format = "WAV"
+        format = "WAV",
+        albumArtist = "iMikasa Synthesizer"
     )
 
     composeTestRule.setContent {

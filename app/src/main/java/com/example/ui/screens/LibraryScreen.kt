@@ -202,7 +202,7 @@ fun LibraryScreen(
                 }
             }
         } else {
-            items(trackList) { track ->
+            items(trackList, key = { it.id }) { track ->
                 val isPlayingThis = currentTrack?.id == track.id
                 
                 Row(

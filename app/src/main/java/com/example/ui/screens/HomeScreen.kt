@@ -181,7 +181,7 @@ fun HomeScreen(
 
         // List of preset/synthetic tracks
         val presetTracks = trackList.filter { it.id.startsWith("builtin_") }
-        items(presetTracks) { track ->
+        items(presetTracks, key = { it.id }) { track ->
             val isPlayingThis = currentTrack?.id == track.id
             
             Card(

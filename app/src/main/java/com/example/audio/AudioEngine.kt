@@ -8,6 +8,7 @@ import android.media.audiofx.BassBoost
 import android.media.audiofx.Equalizer
 import android.media.audiofx.Virtualizer
 import android.net.Uri
+import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
 import com.example.R
@@ -30,7 +31,8 @@ data class Track(
     val coverResId: Int? = null,
     val sampleRate: Int = 44100,
     val bitDepth: Int = 16,
-    val format: String = "WAV"
+    val format: String = "WAV",
+    val albumArtist: String = ""
 )
 
 class AudioEngine(private val context: Context) {
@@ -207,7 +209,8 @@ class AudioEngine(private val context: Context) {
                 coverResId = R.drawable.img_cover_ambient,
                 sampleRate = 96000,
                 bitDepth = 24,
-                format = "WAV"
+                format = "WAV",
+                albumArtist = "iMikasa Synthesizer"
             ),
             Track(
                 id = "builtin_neon",
@@ -222,7 +225,8 @@ class AudioEngine(private val context: Context) {
                 coverResId = R.drawable.img_cover_neon,
                 sampleRate = 44100,
                 bitDepth = 16,
-                format = "WAV"
+                format = "WAV",
+                albumArtist = "iMikasa Synthesizer"
             ),
             Track(
                 id = "builtin_zen",
@@ -237,7 +241,8 @@ class AudioEngine(private val context: Context) {
                 coverResId = R.drawable.img_cover_acoustic,
                 sampleRate = 48000,
                 bitDepth = 16,
-                format = "WAV"
+                format = "WAV",
+                albumArtist = "iMikasa Synthesizer"
             ),
             Track(
                 id = "dsd_sample_track",
@@ -252,7 +257,8 @@ class AudioEngine(private val context: Context) {
                 coverResId = R.drawable.img_cover_ambient,
                 sampleRate = 11289600,
                 bitDepth = 1,
-                format = "DSF"
+                format = "DSF",
+                albumArtist = "Budapest Festival Orchestra"
             ),
             Track(
                 id = "flac_studio_master",
@@ -267,7 +273,8 @@ class AudioEngine(private val context: Context) {
                 coverResId = R.drawable.img_cover_ambient,
                 sampleRate = 192000,
                 bitDepth = 24,
-                format = "FLAC"
+                format = "FLAC",
+                albumArtist = "Elara Quintet"
             ),
             Track(
                 id = "sacd_iso_track",
@@ -282,7 +289,8 @@ class AudioEngine(private val context: Context) {
                 coverResId = R.drawable.img_cover_acoustic,
                 sampleRate = 2822400,
                 bitDepth = 1,
-                format = "ISO SACD"
+                format = "ISO SACD",
+                albumArtist = "Hi-Res Ensemble"
             ),
             Track(
                 id = "alac_apple_lossless",
@@ -297,7 +305,8 @@ class AudioEngine(private val context: Context) {
                 coverResId = R.drawable.img_cover_neon,
                 sampleRate = 96000,
                 bitDepth = 24,
-                format = "ALAC"
+                format = "ALAC",
+                albumArtist = "Satori Strings"
             )
         )
 
@@ -314,14 +323,27 @@ class AudioEngine(private val context: Context) {
         setupBuiltInTracks()
         scanList.addAll(originalQueue)
 
-        val projection = arrayOf(
-            MediaStore.Audio.Media._ID,
-            MediaStore.Audio.Media.TITLE,
-            MediaStore.Audio.Media.ARTIST,
-            MediaStore.Audio.Media.ALBUM,
-            MediaStore.Audio.Media.DURATION,
-            MediaStore.Audio.Media.DATA
-        )
+        val hasAlbumArtist = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+        val projection = if (hasAlbumArtist) {
+            arrayOf(
+                MediaStore.Audio.Media._ID,
+                MediaStore.Audio.Media.TITLE,
+                MediaStore.Audio.Media.ARTIST,
+                MediaStore.Audio.Media.ALBUM,
+                MediaStore.Audio.Media.DURATION,
+                MediaStore.Audio.Media.DATA,
+                MediaStore.Audio.Media.ALBUM_ARTIST
+            )
+        } else {
+            arrayOf(
+                MediaStore.Audio.Media._ID,
+                MediaStore.Audio.Media.TITLE,
+                MediaStore.Audio.Media.ARTIST,
+                MediaStore.Audio.Media.ALBUM,
+                MediaStore.Audio.Media.DURATION,
+                MediaStore.Audio.Media.DATA
+            )
+        }
 
         val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
         val sortOrder = "${MediaStore.Audio.Media.TITLE} ASC"
@@ -340,6 +362,7 @@ class AudioEngine(private val context: Context) {
                 val albumCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
                 val durationCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
                 val dataCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
+                val albumArtistCol = if (hasAlbumArtist) cursor.getColumnIndex(MediaStore.Audio.Media.ALBUM_ARTIST) else -1
 
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idCol)
@@ -349,6 +372,7 @@ class AudioEngine(private val context: Context) {
                     val duration = cursor.getLong(durationCol)
                     val path = cursor.getString(dataCol)
                     val uri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
+                    val albumArtist = if (albumArtistCol != -1) cursor.getString(albumArtistCol) ?: artist else artist
 
                     val isHiResFormat = path?.endsWith(".flac", true) == true || 
                                       path?.endsWith(".wav", true) == true ||
@@ -375,7 +399,8 @@ class AudioEngine(private val context: Context) {
                             },
                             sampleRate = rate,
                             bitDepth = bits,
-                            format = fmt
+                            format = fmt,
+                            albumArtist = if (albumArtist == "<unknown>") "Local Offline Artist" else albumArtist
                         )
                     )
                 }
