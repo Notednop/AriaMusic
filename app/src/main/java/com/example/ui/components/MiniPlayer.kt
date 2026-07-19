@@ -22,6 +22,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.audio.Track
 
@@ -32,6 +33,7 @@ fun MiniPlayer(
     onPlayPauseClick: () -> Unit,
     onNextClick: () -> Unit,
     onExpandClick: () -> Unit,
+    isUsbDacConnected: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     if (track == null) return
@@ -67,7 +69,6 @@ fun MiniPlayer(
                         modifier = Modifier.fillMaxSize()
                     )
                 } else {
-                    // Draw a gorgeous procedural vinyl placeholder if custom artwork is missing
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -90,14 +91,33 @@ fun MiniPlayer(
             Column(
                 modifier = Modifier.weight(1f)
             ) {
-                Text(
-                    text = track.title,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = track.title,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (isUsbDacConnected) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Box(
+                            modifier = Modifier
+                                .background(Color(0xFFE23E57), RoundedCornerShape(2.dp))
+                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                                .testTag("mini_badge_usb_dac")
+                        ) {
+                            Text(
+                                text = "USB DAC",
+                                color = Color.White,
+                                fontSize = 6.sp,
+                                fontWeight = FontWeight.Black
+                            )
+                        }
+                    }
+                }
                 Text(
                     text = track.artist,
                     color = Color.Gray,

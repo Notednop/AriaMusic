@@ -42,6 +42,10 @@ fun FullPlayer(
     isShuffleEnabled: Boolean,
     isRepeatEnabled: Boolean,
     isHiResEngineEnabled: Boolean,
+    isUsbDacConnected: Boolean = false,
+    isExclusiveModeActive: Boolean = false,
+    isBitPerfectActive: Boolean = false,
+    isDsdActive: Boolean = false,
     onPlayPauseClick: () -> Unit,
     onNextClick: () -> Unit,
     onPreviousClick: () -> Unit,
@@ -55,7 +59,6 @@ fun FullPlayer(
 ) {
     if (track == null) return
 
-    // Format millisecond calculations helper
     fun formatTime(ms: Long): String {
         val totalSecs = ms / 1000
         val mins = totalSecs / 60
@@ -65,7 +68,6 @@ fun FullPlayer(
 
     val remainingTimeMs = (duration - currentPosition).coerceAtLeast(0L)
 
-    // Animated Album Art Scale & Elevation (Breathing physical feedback)
     val artSize by animateDpAsState(
         targetValue = if (isPlaying) 290.dp else 240.dp,
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
@@ -77,7 +79,6 @@ fun FullPlayer(
         label = "album_art_corners"
     )
 
-    // Dynamic Waveform animation ticker
     val infiniteTransition = rememberInfiniteTransition(label = "waveform_ticker")
     val waveformPhase by infiniteTransition.animateFloat(
         initialValue = 0f,
@@ -136,7 +137,7 @@ fun FullPlayer(
                     letterSpacing = 1.5.sp
                 )
                 Text(
-                    text = if (isHiResEngineEnabled) "Hi-Res Direct Output" else "Offline Library",
+                    text = if (isExclusiveModeActive) "Exclusive USB Direct Driver" else if (isHiResEngineEnabled) "Hi-Res Direct Output" else "Offline Library",
                     fontSize = 12.sp,
                     color = Color.White.copy(alpha = 0.8f),
                     fontWeight = FontWeight.Medium
@@ -164,14 +165,13 @@ fun FullPlayer(
 
         Spacer(modifier = Modifier.weight(1f))
 
-        // Breathing Album Cover Artwork Section with Soft Radial Ambient backglow
+        // Album Art Cover Section
         Box(
             modifier = Modifier
                 .align(Alignment.CenterHorizontally)
                 .size(320.dp),
             contentAlignment = Alignment.Center
         ) {
-            // Soft atmospheric magenta/ruby blur backglow (mimicking the blur overlay in Sophisticated Dark spec)
             Box(
                 modifier = Modifier
                     .size(320.dp)
@@ -235,7 +235,7 @@ fun FullPlayer(
 
         Spacer(modifier = Modifier.weight(1f))
 
-        // Track Title & Artist Metadata Label
+        // Title and Artist
         Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.Start
@@ -267,7 +267,6 @@ fun FullPlayer(
                     )
                 }
 
-                // Elegant Heart Favorite Badge with ruby red tint (from design HTML)
                 IconButton(
                     onClick = {},
                     modifier = Modifier.size(44.dp)
@@ -281,70 +280,121 @@ fun FullPlayer(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            // Sophisticated High Fidelity Indicators & DAC Direct bypass badge
+            // Dynamic High Fidelity Badges Row
+            // Incorporating: USB DAC, Hi-Res, Bit Perfect, DSD, Exclusive Mode badges
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                // Hi-Res Lossless badge
-                Box(
-                    modifier = Modifier
-                        .border(1.dp, Color(0x66EAB308), RoundedCornerShape(4.dp))
-                        .clickable { onQualityBadgeClick() }
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                ) {
-                    Text(
-                        text = if (track.isHiRes) "HI-RES LOSSLESS" else "LOSSLESS",
-                        color = Color(0xFFEAB308),
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = (-0.3).sp
-                    )
+                // 1. USB DAC Badge (displays only if a USB DAC is active/connected)
+                if (isUsbDacConnected) {
+                    Box(
+                        modifier = Modifier
+                            .background(Color(0xFFE23E57), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .testTag("badge_usb_dac")
+                    ) {
+                        Text(
+                            text = "USB DAC",
+                            color = Color.White,
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Black
+                        )
+                    }
                 }
 
-                // Sample Rate Specification Badge
+                // 2. Hi-Res Badge (always show for lossless high-res source tracks)
+                if (track.isHiRes) {
+                    Box(
+                        modifier = Modifier
+                            .border(1.dp, Color(0xFFEAB308), RoundedCornerShape(4.dp))
+                            .clickable { onQualityBadgeClick() }
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .testTag("badge_hires")
+                    ) {
+                        Text(
+                            text = "HI-RES",
+                            color = Color(0xFFEAB308),
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Black
+                        )
+                    }
+                }
+
+                // 3. Bit Perfect Badge (show if streaming bypass is true bit-perfect)
+                if (isBitPerfectActive) {
+                    Box(
+                        modifier = Modifier
+                            .border(1.dp, Color(0xFF34C759), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .testTag("badge_bit_perfect")
+                    ) {
+                        Text(
+                            text = "BIT PERFECT",
+                            color = Color(0xFF34C759),
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Black
+                        )
+                    }
+                }
+
+                // 4. DSD Badge (show if current track is format DSF/DSD/ISO)
+                if (isDsdActive) {
+                    Box(
+                        modifier = Modifier
+                            .border(1.dp, Color(0xFF3B82F6), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .testTag("badge_dsd")
+                    ) {
+                        Text(
+                            text = "DSD",
+                            color = Color(0xFF3B82F6),
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Black
+                        )
+                    }
+                }
+
+                // 5. Exclusive Mode Badge (show if streaming exclusively bypassing system)
+                if (isExclusiveModeActive) {
+                    Box(
+                        modifier = Modifier
+                            .border(1.dp, Color(0xFFA855F7), RoundedCornerShape(4.dp))
+                            .background(Color(0xFFA855F7).copy(alpha = 0.1f), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .testTag("badge_exclusive_mode")
+                    ) {
+                        Text(
+                            text = "EXCLUSIVE",
+                            color = Color(0xFFA855F7),
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Black
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.weight(1f))
+
+                // Standard metadata badge
                 Box(
                     modifier = Modifier
                         .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
                         .padding(horizontal = 6.dp, vertical = 2.dp)
                 ) {
                     Text(
-                        text = if (track.isHiRes) "24-BIT / 192KHZ" else "16-BIT / 44.1KHZ",
+                        text = if (track.isHiRes) "${track.bitDepth}-BIT/${track.sampleRate / 1000}KHZ" else "16-BIT/44.1K",
                         color = Color.White.copy(alpha = 0.5f),
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = (-0.3).sp
-                    )
-                }
-
-                Spacer(modifier = Modifier.weight(1f))
-
-                // DAC Direct Indicator / Bypass status
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(6.dp)
-                            .clip(CircleShape)
-                            .background(if (isHiResEngineEnabled) Color(0xFF22C55E) else Color.Gray)
-                    )
-                    Text(
-                        text = if (isHiResEngineEnabled) "DAC DIRECT" else "SYSTEM OUTPUT",
-                        color = if (isHiResEngineEnabled) Color(0xFF22C55E) else Color.Gray,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        letterSpacing = 0.5.sp
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(20.dp))
 
         // Time Scrub Slider
         Column(modifier = Modifier.fillMaxWidth()) {
@@ -383,7 +433,7 @@ fun FullPlayer(
 
         Spacer(modifier = Modifier.weight(1f))
 
-        // Dynamic Real-time Audio Waveform Visualizer Canvas
+        // Real-time Audio Waveform Visualizer Canvas
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -401,12 +451,10 @@ fun FullPlayer(
                 for (b in 0 until totalBars) {
                     val progressFraction = b.toFloat() / totalBars
                     
-                    // Wave synthesis formula mapping
                     val waveValue = if (isPlaying) {
                         sin((progressFraction * 4f * java.lang.Math.PI.toFloat()) + waveformPhase) * 0.7f + 
                         sin((progressFraction * 8f * java.lang.Math.PI.toFloat()) - waveformPhase * 0.5f) * 0.3f
                     } else {
-                        // Sleep waveform
                         sin(progressFraction * 2f * java.lang.Math.PI.toFloat()) * 0.08f
                     }
 
@@ -427,13 +475,12 @@ fun FullPlayer(
 
         Spacer(modifier = Modifier.weight(1f))
 
-        // Playback Console Buttons (Pure White Round Play Button with Black icon)
+        // Playback Console Buttons
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Previous
             IconButton(
                 onClick = onPreviousClick,
                 modifier = Modifier
@@ -451,7 +498,6 @@ fun FullPlayer(
 
             Spacer(modifier = Modifier.width(32.dp))
 
-            // Big Premium Play/Pause (Pure White Circular button with Black icon from HTML design)
             Box(
                 modifier = Modifier
                     .size(76.dp)
@@ -471,7 +517,6 @@ fun FullPlayer(
 
             Spacer(modifier = Modifier.width(32.dp))
 
-            // Next
             IconButton(
                 onClick = onNextClick,
                 modifier = Modifier
@@ -481,7 +526,7 @@ fun FullPlayer(
             ) {
                 Icon(
                     imageVector = Icons.Default.SkipNext,
-                    contentDescription = "Next",
+                    contentDescription = "Next Track",
                     tint = Color.White.copy(alpha = 0.8f),
                     modifier = Modifier.size(26.dp)
                 )
@@ -490,7 +535,7 @@ fun FullPlayer(
 
         Spacer(modifier = Modifier.weight(1f))
 
-        // Shuffle, List, Lyrics & Repeat Controls (Secondary interaction row from Design HTML)
+        // Shuffle, List, Lyrics & Repeat Controls
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -511,7 +556,7 @@ fun FullPlayer(
             }
 
             IconButton(
-                onClick = {}, // Secondary Playlist Queue visualizer indicator
+                onClick = {},
                 modifier = Modifier.size(44.dp)
             ) {
                 Icon(
@@ -523,7 +568,7 @@ fun FullPlayer(
             }
 
             IconButton(
-                onClick = {}, // Secondary Lyrics indicator
+                onClick = {},
                 modifier = Modifier.size(44.dp)
             ) {
                 Icon(

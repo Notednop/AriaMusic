@@ -26,7 +26,7 @@ class GreetingScreenshotTest {
     val mockTrack = Track(
         id = "mock_track",
         title = "Aura Ambient",
-        artist = "Aria Synthesizer",
+        artist = "iMikasa Synthesizer",
         album = "Cosmic Soundscapes",
         durationMs = 60000,
         filePath = null,

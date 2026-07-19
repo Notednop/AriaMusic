@@ -45,8 +45,32 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val virtualizerStrength = audioEngine.virtualizerStrength
     val activePreset = audioEngine.activePreset
 
+    // USB Audio Subsystem state properties
+    val connectedDac = audioEngine.usbDacManager.connectedDac
+    val mockDacProfiles = audioEngine.usbDacManager.mockDacProfiles
+
+    val isExclusiveModeEnabled = audioEngine.usbAudioEngine.isExclusiveModeEnabled
+    val isBitPerfectEnabled = audioEngine.usbAudioEngine.isBitPerfectEnabled
+    val dsdMode = audioEngine.usbAudioEngine.dsdMode
+    val bufferMode = audioEngine.usbAudioEngine.bufferMode
+    val usbBufferSize = audioEngine.usbAudioEngine.bufferSize
+    val usbPacketSize = audioEngine.usbAudioEngine.packetSize
+    val volumeControlMode = audioEngine.usbAudioEngine.volumeControlMode
+    val hardwareVolume = audioEngine.usbAudioEngine.hardwareVolume
+    val softwareVolume = audioEngine.usbAudioEngine.softwareVolume
+    val autoReconnectDac = audioEngine.usbAudioEngine.autoReconnectDac
+    val autoSwitchOutput = audioEngine.usbAudioEngine.autoSwitchOutput
+
+    // USB dynamic specs monitor
+    val activeSampleRate = audioEngine.usbAudioEngine.activeSampleRate
+    val activeBitDepth = audioEngine.usbAudioEngine.activeBitDepth
+    val pcmOrDsdState = audioEngine.usbAudioEngine.pcmOrDsdState
+    val usbUnderrunCount = audioEngine.usbAudioEngine.underrunCount
+    val clockSourceInfo = audioEngine.usbAudioEngine.clockSourceInfo
+    val usbEngineError = audioEngine.usbAudioEngine.engineError
+
     // UI-only state variables
-    private val _currentTab = MutableStateFlow(0) // 0 = Listen Now, 1 = Library, 2 = Equalizer
+    private val _currentTab = MutableStateFlow(0) // 0 = Listen Now, 1 = Library, 2 = Equalizer, 3 = DAC
     val currentTab: StateFlow<Int> = _currentTab.asStateFlow()
 
     private val _isPlayerExpanded = MutableStateFlow(false)
@@ -148,6 +172,59 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             audioEngine.scanDeviceMedia()
         }
+    }
+
+    // USB Engine control commands
+    fun setExclusiveModeEnabled(enabled: Boolean) {
+        audioEngine.usbAudioEngine.setExclusiveModeEnabled(enabled)
+    }
+
+    fun setBitPerfectEnabled(enabled: Boolean) {
+        audioEngine.usbAudioEngine.setBitPerfectEnabled(enabled)
+    }
+
+    fun setDsdMode(mode: String) {
+        audioEngine.usbAudioEngine.setDsdMode(mode)
+    }
+
+    fun setBufferMode(mode: String) {
+        audioEngine.usbAudioEngine.setBufferMode(mode)
+    }
+
+    fun setUsbBufferSize(size: Int) {
+        audioEngine.usbAudioEngine.setBufferSize(size)
+    }
+
+    fun setUsbPacketSize(size: Int) {
+        audioEngine.usbAudioEngine.setPacketSize(size)
+    }
+
+    fun setVolumeControlMode(mode: String) {
+        audioEngine.usbAudioEngine.setVolumeControlMode(mode)
+    }
+
+    fun setHardwareVolume(vol: Int) {
+        audioEngine.usbAudioEngine.setHardwareVolume(vol)
+    }
+
+    fun setSoftwareVolume(vol: Int) {
+        audioEngine.usbAudioEngine.setSoftwareVolume(vol)
+    }
+
+    fun setAutoReconnectDac(enabled: Boolean) {
+        audioEngine.usbAudioEngine.setAutoReconnectDac(enabled)
+    }
+
+    fun setAutoSwitchOutput(enabled: Boolean) {
+        audioEngine.usbAudioEngine.setAutoSwitchOutput(enabled)
+    }
+
+    fun connectMockDac(index: Int) {
+        audioEngine.usbDacManager.connectMockDac(index)
+    }
+
+    fun disconnectDac() {
+        audioEngine.usbDacManager.disconnectDac()
     }
 
     override fun onCleared() {

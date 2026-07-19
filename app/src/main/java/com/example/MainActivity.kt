@@ -89,6 +89,28 @@ fun MainAppScreen(viewModel: MusicViewModel) {
     val bufferSize by viewModel.bufferSize.collectAsState()
     val playbackError by viewModel.playbackError.collectAsState()
 
+    // Collect USB direct engine variables
+    val connectedDac by viewModel.connectedDac.collectAsState()
+    val mockDacProfiles = viewModel.mockDacProfiles
+    val isExclusiveModeEnabled by viewModel.isExclusiveModeEnabled.collectAsState()
+    val isBitPerfectEnabled by viewModel.isBitPerfectEnabled.collectAsState()
+    val dsdMode by viewModel.dsdMode.collectAsState()
+    val bufferMode by viewModel.bufferMode.collectAsState()
+    val usbBufferSize by viewModel.usbBufferSize.collectAsState()
+    val usbPacketSize by viewModel.usbPacketSize.collectAsState()
+    val volumeControlMode by viewModel.volumeControlMode.collectAsState()
+    val hardwareVolume by viewModel.hardwareVolume.collectAsState()
+    val softwareVolume by viewModel.softwareVolume.collectAsState()
+    val autoReconnectDac by viewModel.autoReconnectDac.collectAsState()
+    val autoSwitchOutput by viewModel.autoSwitchOutput.collectAsState()
+
+    val activeSampleRate by viewModel.activeSampleRate.collectAsState()
+    val activeBitDepth by viewModel.activeBitDepth.collectAsState()
+    val pcmOrDsdState by viewModel.pcmOrDsdState.collectAsState()
+    val usbUnderrunCount by viewModel.usbUnderrunCount.collectAsState()
+    val clockSourceInfo by viewModel.clockSourceInfo.collectAsState()
+    val usbEngineError by viewModel.usbEngineError.collectAsState()
+
     val context = LocalContext.current
     var hasFloatingPermission by remember {
         mutableStateOf(
@@ -126,6 +148,12 @@ fun MainAppScreen(viewModel: MusicViewModel) {
 
     LaunchedEffect(playbackError) {
         playbackError?.let {
+            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    LaunchedEffect(usbEngineError) {
+        usbEngineError?.let {
             Toast.makeText(context, it, Toast.LENGTH_LONG).show()
         }
     }
@@ -240,6 +268,25 @@ fun MainAppScreen(viewModel: MusicViewModel) {
                     performanceProfile = performanceProfile,
                     bufferSize = bufferSize,
                     hasFloatingPermission = hasFloatingPermission,
+                    connectedDac = connectedDac,
+                    mockDacProfiles = mockDacProfiles,
+                    isExclusiveModeEnabled = isExclusiveModeEnabled,
+                    isBitPerfectEnabled = isBitPerfectEnabled,
+                    dsdMode = dsdMode,
+                    bufferMode = bufferMode,
+                    usbBufferSize = usbBufferSize,
+                    usbPacketSize = usbPacketSize,
+                    volumeControlMode = volumeControlMode,
+                    hardwareVolume = hardwareVolume,
+                    softwareVolume = softwareVolume,
+                    autoReconnectDac = autoReconnectDac,
+                    autoSwitchOutput = autoSwitchOutput,
+                    activeSampleRate = activeSampleRate,
+                    activeBitDepth = activeBitDepth,
+                    pcmOrDsdState = pcmOrDsdState,
+                    usbUnderrunCount = usbUnderrunCount,
+                    clockSourceInfo = clockSourceInfo,
+                    usbEngineError = usbEngineError,
                     onRequestFloatingPermission = { requestFloatingPermission() },
                     onHiResToggle = {
                         if (isHiResEngineEnabled || hasFloatingPermission) {
@@ -259,7 +306,20 @@ fun MainAppScreen(viewModel: MusicViewModel) {
                     onBackendChange = { viewModel.setAudioBackend(it) },
                     onDitherChange = { viewModel.setDitherMode(it) },
                     onProfileChange = { viewModel.setPerformanceProfile(it) },
-                    onBufferSizeChange = { viewModel.setBufferSize(it) }
+                    onBufferSizeChange = { viewModel.setBufferSize(it) },
+                    onExclusiveModeToggle = { viewModel.setExclusiveModeEnabled(it) },
+                    onBitPerfectToggle = { viewModel.setBitPerfectEnabled(it) },
+                    onDsdModeChange = { viewModel.setDsdMode(it) },
+                    onBufferModeChange = { viewModel.setBufferMode(it) },
+                    onUsbBufferSizeChange = { viewModel.setUsbBufferSize(it) },
+                    onUsbPacketSizeChange = { viewModel.setUsbPacketSize(it) },
+                    onVolumeModeChange = { viewModel.setVolumeControlMode(it) },
+                    onHardwareVolumeChange = { viewModel.setHardwareVolume(it) },
+                    onSoftwareVolumeChange = { viewModel.setSoftwareVolume(it) },
+                    onAutoReconnectToggle = { viewModel.setAutoReconnectDac(it) },
+                    onAutoSwitchOutputToggle = { viewModel.setAutoSwitchOutput(it) },
+                    onConnectMockDac = { viewModel.connectMockDac(it) },
+                    onDisconnectDac = { viewModel.disconnectDac() }
                 )
             }
 
@@ -275,7 +335,8 @@ fun MainAppScreen(viewModel: MusicViewModel) {
                         isPlaying = isPlaying,
                         onPlayPauseClick = { viewModel.togglePlayPause() },
                         onNextClick = { viewModel.skipToNext() },
-                        onExpandClick = { viewModel.setPlayerExpanded(true) }
+                        onExpandClick = { viewModel.setPlayerExpanded(true) },
+                        isUsbDacConnected = connectedDac != null
                     )
                 }
             }
@@ -297,6 +358,10 @@ fun MainAppScreen(viewModel: MusicViewModel) {
             isShuffleEnabled = isShuffleEnabled,
             isRepeatEnabled = isRepeatEnabled,
             isHiResEngineEnabled = isHiResEngineEnabled,
+            isUsbDacConnected = connectedDac != null,
+            isExclusiveModeActive = isExclusiveModeEnabled && (connectedDac != null),
+            isBitPerfectActive = isBitPerfectEnabled && isExclusiveModeEnabled && (connectedDac != null),
+            isDsdActive = currentTrack?.format in listOf("DSF", "DFF", "ISO SACD") || currentTrack?.title?.contains("dsd", true) == true,
             onPlayPauseClick = { viewModel.togglePlayPause() },
             onNextClick = { viewModel.skipToNext() },
             onPreviousClick = { viewModel.skipToPrevious() },

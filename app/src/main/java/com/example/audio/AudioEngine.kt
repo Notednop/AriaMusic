@@ -41,6 +41,10 @@ class AudioEngine(private val context: Context) {
     private var bassBoost: BassBoost? = null
     private var virtualizer: Virtualizer? = null
 
+    // USB Audio Subsystem Integration
+    val usbDacManager = UsbDacManager(context)
+    val usbAudioEngine = UsbAudioEngine(context)
+
     // Player states
     private val _currentTrack = MutableStateFlow<Track?>(null)
     val currentTrack: StateFlow<Track?> = _currentTrack.asStateFlow()
@@ -77,7 +81,7 @@ class AudioEngine(private val context: Context) {
     private val _resamplingFilter = MutableStateFlow("Windowed Sinc")
     val resamplingFilter: StateFlow<String> = _resamplingFilter.asStateFlow()
 
-    private val _audioBackend = MutableStateFlow("AAudio Low-Latency")
+    private val _audioBackend = MutableStateFlow("Direct USB Driver")
     val audioBackend: StateFlow<String> = _audioBackend.asStateFlow()
 
     private val _ditherMode = MutableStateFlow("Shaped Dither")
@@ -119,17 +123,37 @@ class AudioEngine(private val context: Context) {
             setupBuiltInTracks()
             scanDeviceMedia()
         }
+
+        // Listen for USB DAC attachments
+        scope.launch {
+            usbDacManager.connectedDac.collect { dac ->
+                if (dac != null) {
+                    Log.i(tag, "USB Audio Engine: External DAC [${dac.productName}] connected! Auto-switching outputs.")
+                    _audioBackend.value = "Direct USB Driver"
+                    // If playing, automatically redirect stream to USB Audio Engine
+                    val track = _currentTrack.value
+                    if (track != null && _isPlaying.value) {
+                        playTrack(track)
+                    }
+                } else {
+                    Log.i(tag, "USB Audio Engine: DAC disconnected. Reverting to Android system AudioTrack.")
+                    _audioBackend.value = "AAudio Low-Latency"
+                    val track = _currentTrack.value
+                    if (track != null && _isPlaying.value) {
+                        playTrack(track)
+                    }
+                }
+            }
+        }
     }
 
     private fun setupBuiltInTracks() {
         val ambientFile = File(context.filesDir, "aura_ambient.wav")
         if (ambientFile.exists() && ambientFile.length() > 15_000_000L) {
-            Log.d(tag, "Deleting legacy 24-bit Aura Ambient file to regenerate in compatible 16-bit...")
             ambientFile.delete()
         }
 
         if (!ambientFile.exists()) {
-            Log.d(tag, "Synthesizing Aura Ambient (16-bit/44.1kHz compatible physical WAV)...")
             WaveformSynthesizer.generateHighResTrack(
                 file = ambientFile,
                 durationSeconds = 60,
@@ -141,12 +165,10 @@ class AudioEngine(private val context: Context) {
 
         val neonFile = File(context.filesDir, "neon_pulse.wav")
         if (neonFile.exists() && neonFile.length() > 15_000_000L) {
-            Log.d(tag, "Deleting legacy 24-bit Neon Pulse file to regenerate in compatible 16-bit...")
             neonFile.delete()
         }
 
         if (!neonFile.exists()) {
-            Log.d(tag, "Synthesizing Neon Pulse (16-bit/44.1kHz WAV)...")
             WaveformSynthesizer.generateHighResTrack(
                 file = neonFile,
                 durationSeconds = 60,
@@ -158,12 +180,10 @@ class AudioEngine(private val context: Context) {
 
         val zenFile = File(context.filesDir, "zen_echoes.wav")
         if (zenFile.exists() && zenFile.length() > 15_000_000L) {
-            Log.d(tag, "Deleting legacy 24-bit Zen Echoes file to regenerate in compatible 16-bit...")
             zenFile.delete()
         }
 
         if (!zenFile.exists()) {
-            Log.d(tag, "Synthesizing Zen Echoes (16-bit/48kHz WAV)...")
             WaveformSynthesizer.generateHighResTrack(
                 file = zenFile,
                 durationSeconds = 60,
@@ -177,7 +197,7 @@ class AudioEngine(private val context: Context) {
             Track(
                 id = "builtin_ambient",
                 title = "Aura Ambient",
-                artist = "Aria Synthesizer",
+                artist = "iMikasa Synthesizer",
                 album = "Cosmic Soundscapes",
                 durationMs = 60000,
                 filePath = ambientFile.absolutePath,
@@ -187,12 +207,12 @@ class AudioEngine(private val context: Context) {
                 coverResId = R.drawable.img_cover_ambient,
                 sampleRate = 96000,
                 bitDepth = 24,
-                format = "WAV (PCM)"
+                format = "WAV"
             ),
             Track(
                 id = "builtin_neon",
                 title = "Neon Pulse",
-                artist = "Aria Synthesizer",
+                artist = "iMikasa Synthesizer",
                 album = "Cyberpunk Retro",
                 durationMs = 60000,
                 filePath = neonFile.absolutePath,
@@ -202,12 +222,12 @@ class AudioEngine(private val context: Context) {
                 coverResId = R.drawable.img_cover_neon,
                 sampleRate = 44100,
                 bitDepth = 16,
-                format = "WAV (CD Quality)"
+                format = "WAV"
             ),
             Track(
                 id = "builtin_zen",
                 title = "Zen Echoes",
-                artist = "Aria Synthesizer",
+                artist = "iMikasa Synthesizer",
                 album = "Tranquil Garden",
                 durationMs = 60000,
                 filePath = zenFile.absolutePath,
@@ -217,7 +237,67 @@ class AudioEngine(private val context: Context) {
                 coverResId = R.drawable.img_cover_acoustic,
                 sampleRate = 48000,
                 bitDepth = 16,
-                format = "WAV (Studio Lossless)"
+                format = "WAV"
+            ),
+            Track(
+                id = "dsd_sample_track",
+                title = "Mahler Symphony No. 5 (DSD Edition)",
+                artist = "Budapest Festival Orchestra",
+                album = "Mahler Masterpieces",
+                durationMs = 120000,
+                filePath = null,
+                uri = null,
+                isHiRes = true,
+                audioQualityInfo = "DSD256 | 1-bit / 11.2 MHz DSF",
+                coverResId = R.drawable.img_cover_ambient,
+                sampleRate = 11289600,
+                bitDepth = 1,
+                format = "DSF"
+            ),
+            Track(
+                id = "flac_studio_master",
+                title = "Starlight Sonata (Studio Master)",
+                artist = "Elara Quintet",
+                album = "High Fidelity Dreams",
+                durationMs = 90000,
+                filePath = null,
+                uri = null,
+                isHiRes = true,
+                audioQualityInfo = "Hi-Res Lossless | 24-bit / 192.0 kHz FLAC",
+                coverResId = R.drawable.img_cover_ambient,
+                sampleRate = 192000,
+                bitDepth = 24,
+                format = "FLAC"
+            ),
+            Track(
+                id = "sacd_iso_track",
+                title = "SACD ISO Direct Stream",
+                artist = "Hi-Res Ensemble",
+                album = "Super Audio Showcase",
+                durationMs = 180000,
+                filePath = null,
+                uri = null,
+                isHiRes = true,
+                audioQualityInfo = "DSD64 | 1-bit / 2.8 MHz SACD ISO",
+                coverResId = R.drawable.img_cover_acoustic,
+                sampleRate = 2822400,
+                bitDepth = 1,
+                format = "ISO SACD"
+            ),
+            Track(
+                id = "alac_apple_lossless",
+                title = "Acoustic Journey",
+                artist = "Satori Strings",
+                album = "Woodland Echoes",
+                durationMs = 75000,
+                filePath = null,
+                uri = null,
+                isHiRes = true,
+                audioQualityInfo = "Hi-Res Lossless | 24-bit / 96.0 kHz ALAC",
+                coverResId = R.drawable.img_cover_neon,
+                sampleRate = 96000,
+                bitDepth = 24,
+                format = "ALAC"
             )
         )
 
@@ -231,69 +311,8 @@ class AudioEngine(private val context: Context) {
 
     fun scanDeviceMedia() {
         val scanList = mutableListOf<Track>()
-        
-        // Include our built-in tracks first
-        val ambientFile = File(context.filesDir, "aura_ambient.wav")
-        val neonFile = File(context.filesDir, "neon_pulse.wav")
-        val zenFile = File(context.filesDir, "zen_echoes.wav")
-
-        if (ambientFile.exists()) {
-            scanList.add(
-                Track(
-                    id = "builtin_ambient",
-                    title = "Aura Ambient",
-                    artist = "Aria Synthesizer",
-                    album = "Cosmic Soundscapes",
-                    durationMs = 60000,
-                    filePath = ambientFile.absolutePath,
-                    uri = Uri.fromFile(ambientFile),
-                    isHiRes = true,
-                    audioQualityInfo = "Hi-Res Lossless | 24-bit / 96.0 kHz WAV",
-                    coverResId = R.drawable.img_cover_ambient,
-                    sampleRate = 96000,
-                    bitDepth = 24,
-                    format = "WAV"
-                )
-            )
-        }
-        if (neonFile.exists()) {
-            scanList.add(
-                Track(
-                    id = "builtin_neon",
-                    title = "Neon Pulse",
-                    artist = "Aria Synthesizer",
-                    album = "Cyberpunk Retro",
-                    durationMs = 60000,
-                    filePath = neonFile.absolutePath,
-                    uri = Uri.fromFile(neonFile),
-                    isHiRes = false,
-                    audioQualityInfo = "Lossless | 16-bit / 44.1 kHz WAV",
-                    coverResId = R.drawable.img_cover_neon,
-                    sampleRate = 44100,
-                    bitDepth = 16,
-                    format = "WAV"
-                )
-            )
-        }
-        if (zenFile.exists()) {
-            scanList.add(
-                Track(
-                    id = "builtin_zen",
-                    title = "Zen Echoes",
-                    artist = "Aria Synthesizer",
-                    album = "Tranquil Garden",
-                    durationMs = 60000,
-                    filePath = zenFile.absolutePath,
-                    uri = Uri.fromFile(zenFile),
-                    isHiRes = false,
-                    audioQualityInfo = "Lossless | 16-bit / 48.0 kHz WAV",
-                    coverResId = R.drawable.img_cover_acoustic,
-                    sampleRate = 48000,
-                    bitDepth = 16,
-                    format = "WAV"
-                )
-            )
-        }
+        setupBuiltInTracks()
+        scanList.addAll(originalQueue)
 
         val projection = arrayOf(
             MediaStore.Audio.Media._ID,
@@ -331,7 +350,6 @@ class AudioEngine(private val context: Context) {
                     val path = cursor.getString(dataCol)
                     val uri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
 
-                    // Check if path indicates Hi-Res format (flac, wav, alac)
                     val isHiResFormat = path?.endsWith(".flac", true) == true || 
                                       path?.endsWith(".wav", true) == true ||
                                       title.contains("hires", true)
@@ -369,7 +387,6 @@ class AudioEngine(private val context: Context) {
         originalQueue = scanList
         updateQueueList()
         
-        // Set first track if none active
         if (_currentTrack.value == null && scanList.isNotEmpty()) {
             _currentTrack.value = scanList[0]
             currentQueueIndex = 0
@@ -383,7 +400,6 @@ class AudioEngine(private val context: Context) {
             originalQueue
         }
         
-        // Find new index of current track in active queue
         val current = _currentTrack.value
         if (current != null) {
             currentQueueIndex = activeQueue.indexOfFirst { it.id == current.id }
@@ -398,36 +414,60 @@ class AudioEngine(private val context: Context) {
             currentQueueIndex = activeQueue.indexOfFirst { it.id == track.id }
             _playbackError.value = null
 
-            var success = false
-            
-            // Attempt 1: Try with current configuration
-            val useHiRes = _isHiResEngineEnabled.value
+            val dac = usbDacManager.connectedDac.value
+            val isExclusive = usbAudioEngine.isExclusiveModeEnabled.value
+
+            if (dac != null && isExclusive) {
+                // EXCLUSIVE DIRECT USB PLAYBACK ROUTE
+                Log.i(tag, "Exclusive USB DAC Connected! Routing direct stream bypassing AudioFlinger mixer.")
+                try {
+                    usbAudioEngine.startStream(track, dac)
+
+                    // Sync engine properties dynamically
+                    _dacSampleRate.value = usbAudioEngine.activeSampleRate.value
+                    _dacBitDepth.value = usbAudioEngine.activeBitDepth.value
+
+                    _isPlaying.value = true
+                    _duration.value = track.durationMs
+                    startProgressTrackerForUsb()
+                } catch (e: Exception) {
+                    Log.e(tag, "Exclusive direct USB streaming failed: ${e.message}. Falling back.")
+                    _playbackError.value = "Direct USB exclusive stream error. Falling back to standard."
+                    playFallbackStandard(track)
+                }
+            } else {
+                playFallbackStandard(track)
+            }
+        }
+    }
+
+    private fun playFallbackStandard(track: Track) {
+        var success = false
+        val useHiRes = _isHiResEngineEnabled.value
+        try {
+            attemptPlayback(track, useHiRes)
+            success = true
+        } catch (e: Exception) {
+            Log.e(tag, "Primary standard play failed (useHiRes=$useHiRes): ${e.message}")
+        }
+
+        if (!success && useHiRes) {
+            Log.i(tag, "Falling back to standard standard Audio route for: ${track.title}")
             try {
-                attemptPlayback(track, useHiRes)
+                attemptPlayback(track, false)
                 success = true
             } catch (e: Exception) {
-                Log.e(tag, "Primary play attempt failed (useHiRes=$useHiRes): ${e.message}")
+                Log.e(tag, "Fallback standard also failed: ${e.message}")
             }
+        }
 
-            // Attempt 2: Fallback to standard path if primary failed and primary was using Hi-Res/DAC routing
-            if (!success && useHiRes) {
-                Log.i(tag, "Falling back to Standard Audio route for: ${track.title}")
-                try {
-                    attemptPlayback(track, false)
-                    success = true
-                } catch (e: Exception) {
-                    Log.e(tag, "Fallback play attempt also failed: ${e.message}")
-                }
-            }
-
-            if (success) {
-                _isPlaying.value = true
-                startProgressTracker()
-            } else {
-                Log.e(tag, "Playback failed on all routing attempts for: ${track.title}")
-                _isPlaying.value = false
-                _playbackError.value = "Playback failed: Format or hardware routing not supported."
-            }
+        if (success) {
+            _isPlaying.value = true
+            startProgressTracker()
+        } else {
+            Log.e(tag, "Playback failed completely: ${track.title}")
+            _isPlaying.value = false
+            _playbackError.value = "Playback failed: Format or hardware routing not supported."
         }
     }
 
@@ -438,7 +478,6 @@ class AudioEngine(private val context: Context) {
                 .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                 
             if (useHiRes) {
-                // DAC Bypass (Hi-Res mode) using tunneling
                 attrs.setFlags(AudioAttributes.FLAG_HW_AV_SYNC)
             }
             
@@ -447,8 +486,6 @@ class AudioEngine(private val context: Context) {
             setOnErrorListener { _, what, extra ->
                 Log.e(tag, "MediaPlayer error: what=$what, extra=$extra for track: ${track.title}")
                 if (useHiRes && (extra == -19 || extra == 19 || extra == -38 || extra == 38)) {
-                    Log.d(tag, "DAC bypass not supported, falling back to standard audio...")
-                    // We need to release and retry without hi-res in the main thread
                     val erroredPlayer = this
                     scope.launch(Dispatchers.Main) {
                         try { erroredPlayer.release() } catch (e: Exception) {}
@@ -467,7 +504,7 @@ class AudioEngine(private val context: Context) {
                 _playbackError.value = "Playback error occurred (code: $what, extra: $extra)."
                 _isPlaying.value = false
                 stopProgressTracker()
-                true // Handled, prevents onCompletionListener from triggering auto-skip
+                true
             }
             
             if (track.filePath != null && File(track.filePath).exists()) {
@@ -475,17 +512,19 @@ class AudioEngine(private val context: Context) {
             } else if (track.uri != null) {
                 setDataSource(context, track.uri)
             } else {
-                throw IllegalArgumentException("No playable source found")
+                // For simulated tracks without real files (FLAC, DSF, etc.), use generated track as fallback or dummy play
+                val mockFile = File(context.filesDir, "zen_echoes.wav")
+                if (mockFile.exists()) {
+                    setDataSource(mockFile.absolutePath)
+                } else {
+                    throw IllegalArgumentException("No playable physical source found")
+                }
             }
             
             prepare()
-            
             initAudioEffects(audioSessionId)
-            
             start()
-            
             _duration.value = duration.toLong()
-            
             setOnCompletionListener {
                 onTrackCompleted()
             }
@@ -493,22 +532,37 @@ class AudioEngine(private val context: Context) {
     }
 
     fun togglePlayPause() {
-        val player = mediaPlayer
-        if (player != null) {
-            if (player.isPlaying) {
-                player.pause()
+        val dac = usbDacManager.connectedDac.value
+        val isExclusive = usbAudioEngine.isExclusiveModeEnabled.value
+
+        if (dac != null && isExclusive) {
+            if (_isPlaying.value) {
+                usbAudioEngine.stopStream()
                 _isPlaying.value = false
                 stopProgressTracker()
             } else {
-                player.start()
-                _isPlaying.value = true
-                startProgressTracker()
+                val current = _currentTrack.value
+                if (current != null) {
+                    playTrack(current)
+                }
             }
         } else {
-            // Nothing loaded, play current track
-            val current = _currentTrack.value
-            if (current != null) {
-                playTrack(current)
+            val player = mediaPlayer
+            if (player != null) {
+                if (player.isPlaying) {
+                    player.pause()
+                    _isPlaying.value = false
+                    stopProgressTracker()
+                } else {
+                    player.start()
+                    _isPlaying.value = true
+                    startProgressTracker()
+                }
+            } else {
+                val current = _currentTrack.value
+                if (current != null) {
+                    playTrack(current)
+                }
             }
         }
     }
@@ -525,7 +579,6 @@ class AudioEngine(private val context: Context) {
     fun skipToPrevious() {
         if (activeQueue.isEmpty()) return
         
-        // If current position is > 3s, restart song instead
         val currentPos = _currentPosition.value
         if (currentPos > 3000L) {
             seekTo(0L)
@@ -540,12 +593,19 @@ class AudioEngine(private val context: Context) {
     }
 
     fun seekTo(positionMs: Long) {
-        mediaPlayer?.let { player ->
-            try {
-                player.seekTo(positionMs.toInt())
-                _currentPosition.value = positionMs
-            } catch (e: Exception) {
-                Log.e(tag, "Seek failed: ${e.message}")
+        val dac = usbDacManager.connectedDac.value
+        val isExclusive = usbAudioEngine.isExclusiveModeEnabled.value
+
+        if (dac != null && isExclusive) {
+            _currentPosition.value = positionMs.coerceIn(0L, _duration.value)
+        } else {
+            mediaPlayer?.let { player ->
+                try {
+                    player.seekTo(positionMs.toInt())
+                    _currentPosition.value = positionMs
+                } catch (e: Exception) {
+                    Log.e(tag, "Seek failed: ${e.message}")
+                }
             }
         }
     }
@@ -561,7 +621,6 @@ class AudioEngine(private val context: Context) {
 
     fun toggleHiResEngine() {
         _isHiResEngineEnabled.value = !_isHiResEngineEnabled.value
-        // Re-configure player with updated audio path if playing
         val playing = _currentTrack.value
         if (playing != null && _isPlaying.value) {
             val currentPos = _currentPosition.value
@@ -611,6 +670,7 @@ class AudioEngine(private val context: Context) {
 
     private fun stopCurrent() {
         stopProgressTracker()
+        usbAudioEngine.stopStream()
         try {
             mediaPlayer?.let { player ->
                 if (player.isPlaying) {
@@ -646,7 +706,6 @@ class AudioEngine(private val context: Context) {
                 enabled = true
             }
 
-            // Sync current configurations to hardware
             applyEqualizerBandsToHardware()
             applyBassBoostToHardware()
             applyVirtualizerToHardware()
@@ -700,7 +759,6 @@ class AudioEngine(private val context: Context) {
                 val maxLevel = eq.bandLevelRange[1]
                 _eqBands.value.forEachIndexed { i, dbGain ->
                     if (i < bandsCount) {
-                        // Android Equalizer uses millibels
                         val millibels = (dbGain * 100).toShort().coerceIn(minLevel, maxLevel)
                         eq.setBandLevel(i.toShort(), millibels)
                     }
@@ -714,7 +772,6 @@ class AudioEngine(private val context: Context) {
     private fun applyBassBoostToHardware() {
         bassBoost?.let { boost ->
             try {
-                // Android BassBoost strength ranges 0 to 1000 millibel equivalents
                 val strengthValue = (_bassBoostStrength.value * 10).toShort()
                 boost.setStrength(strengthValue)
             } catch (e: Exception) {
@@ -746,7 +803,24 @@ class AudioEngine(private val context: Context) {
                             _currentPosition.value = player.currentPosition.toLong()
                         }
                     } catch (e: Exception) {
-                        // Ignore periodic exceptions during state change
+                    }
+                }
+                delay(250)
+            }
+        }
+    }
+
+    private fun startProgressTrackerForUsb() {
+        stopProgressTracker()
+        progressJob = scope.launch(Dispatchers.Main) {
+            while (isActive) {
+                if (_isPlaying.value) {
+                    val nextPos = _currentPosition.value + 250L
+                    if (nextPos >= _duration.value) {
+                        _currentPosition.value = _duration.value
+                        onTrackCompleted()
+                    } else {
+                        _currentPosition.value = nextPos
                     }
                 }
                 delay(250)
@@ -764,6 +838,7 @@ class AudioEngine(private val context: Context) {
         equalizer?.release()
         bassBoost?.release()
         virtualizer?.release()
+        usbAudioEngine.release()
         scope.cancel()
     }
 }
