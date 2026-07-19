@@ -2,6 +2,8 @@ package com.example.audio
 
 import android.content.ContentUris
 import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.media.audiofx.BassBoost
@@ -9,6 +11,7 @@ import android.media.audiofx.Equalizer
 import android.media.audiofx.Virtualizer
 import android.net.Uri
 import android.os.Build
+import android.os.IBinder
 import android.provider.MediaStore
 import android.util.Log
 import com.example.R
@@ -46,6 +49,21 @@ class AudioEngine(private val context: Context) {
     // USB Audio Subsystem Integration
     val usbDacManager = UsbDacManager(context)
     val usbAudioEngine = UsbAudioEngine(context)
+
+    // Bound Playback Service for Background Notification and Persistence
+    private var playbackService: PlaybackService? = null
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: android.content.ComponentName?, service: IBinder?) {
+            val binder = service as? PlaybackService.LocalBinder
+            playbackService = binder?.getService()
+            Log.i(tag, "Successfully bound to PlaybackService foreground channel.")
+            syncNotificationState()
+        }
+
+        override fun onServiceDisconnected(name: android.content.ComponentName?) {
+            playbackService = null
+        }
+    }
 
     // Player states
     private val _currentTrack = MutableStateFlow<Track?>(null)
@@ -126,13 +144,22 @@ class AudioEngine(private val context: Context) {
             scanDeviceMedia()
         }
 
+        // Start and Bind Playback Notification Service
+        try {
+            val serviceIntent = Intent(context, PlaybackService::class.java)
+            context.startService(serviceIntent)
+            context.bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
+            Log.i(tag, "Initiated PlaybackService start and bind from AudioEngine.")
+        } catch (e: Exception) {
+            Log.e(tag, "Error setting up PlaybackService: ${e.message}")
+        }
+
         // Listen for USB DAC attachments
         scope.launch {
             usbDacManager.connectedDac.collect { dac ->
                 if (dac != null) {
                     Log.i(tag, "USB Audio Engine: External DAC [${dac.productName}] connected! Auto-switching outputs.")
                     _audioBackend.value = "Direct USB Driver"
-                    // If playing, automatically redirect stream to USB Audio Engine
                     val track = _currentTrack.value
                     if (track != null && _isPlaying.value) {
                         playTrack(track)
@@ -448,7 +475,6 @@ class AudioEngine(private val context: Context) {
                 try {
                     usbAudioEngine.startStream(track, dac)
 
-                    // Sync engine properties dynamically
                     _dacSampleRate.value = usbAudioEngine.activeSampleRate.value
                     _dacBitDepth.value = usbAudioEngine.activeBitDepth.value
 
@@ -463,6 +489,7 @@ class AudioEngine(private val context: Context) {
             } else {
                 playFallbackStandard(track)
             }
+            syncNotificationState()
         }
     }
 
@@ -537,7 +564,6 @@ class AudioEngine(private val context: Context) {
             } else if (track.uri != null) {
                 setDataSource(context, track.uri)
             } else {
-                // For simulated tracks without real files (FLAC, DSF, etc.), use generated track as fallback or dummy play
                 val mockFile = File(context.filesDir, "zen_echoes.wav")
                 if (mockFile.exists()) {
                     setDataSource(mockFile.absolutePath)
@@ -590,6 +616,7 @@ class AudioEngine(private val context: Context) {
                 }
             }
         }
+        syncNotificationState()
     }
 
     fun skipToNext() {
@@ -709,6 +736,18 @@ class AudioEngine(private val context: Context) {
         }
         _isPlaying.value = false
         _currentPosition.value = 0L
+        syncNotificationState()
+    }
+
+    // --- Media Notification State Sync Helper ---
+    private fun syncNotificationState() {
+        val track = _currentTrack.value
+        val playing = _isPlaying.value
+        if (track != null) {
+            playbackService?.showNotification(track, playing)
+        } else {
+            playbackService?.hideNotification()
+        }
     }
 
     // --- Audio Effects (Equalizer, Bass Boost, Virtualizer) ---
@@ -864,6 +903,13 @@ class AudioEngine(private val context: Context) {
         bassBoost?.release()
         virtualizer?.release()
         usbAudioEngine.release()
+        usbDacManager.release()
+        try {
+            context.unbindService(serviceConnection)
+            Log.i(tag, "PlaybackService foreground channel unbound.")
+        } catch (e: Exception) {
+            // Already unbound
+        }
         scope.cancel()
     }
 }

@@ -159,12 +159,19 @@ class UsbAudioEngine(private val context: Context) {
                 while (isActive) {
                     var bytesRead = 0
                     if (inputStream != null) {
-                        bytesRead = inputStream.read(writeBuffer, 0, writeBuffer.size)
-                        if (bytesRead == -1) {
-                            break // EOF reached, stop streaming
-                        }
-                        if (bytesRead < writeBuffer.size) {
-                            writeBuffer.fill(0, bytesRead, writeBuffer.size)
+                        try {
+                            bytesRead = inputStream.read(writeBuffer, 0, writeBuffer.size)
+                            if (bytesRead == -1) {
+                                break // EOF reached, stop streaming
+                            }
+                            if (bytesRead < writeBuffer.size) {
+                                writeBuffer.fill(0, bytesRead, writeBuffer.size)
+                            }
+                        } catch (e: Exception) {
+                            Log.e(tag, "Resilient buffer: I/O read exception in streaming loop: ${e.message}")
+                            writeBuffer.fill(0)
+                            bytesRead = writeBuffer.size
+                            delay(10) // Small safety delay on I/O failure
                         }
                     } else {
                         // High-fidelity fallback synthesizer (for missing physical file elements or simulated mock tracks)

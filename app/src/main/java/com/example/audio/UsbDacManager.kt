@@ -1,6 +1,9 @@
 package com.example.audio
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
@@ -91,8 +94,36 @@ class UsbDacManager(private val context: Context) {
         )
     )
 
+    private val usbReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val action = intent.action
+            if (UsbManager.ACTION_USB_DEVICE_ATTACHED == action) {
+                Log.i(tag, "USB hardware device plugged in. Initiating detection scan...")
+                scanRealUsbDevices()
+            } else if (UsbManager.ACTION_USB_DEVICE_DETACHED == action) {
+                @Suppress("DEPRECATION")
+                val device = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
+                Log.i(tag, "USB hardware device disconnected: ${device?.productName}")
+                val current = _connectedDac.value
+                if (current != null && device != null && device.vendorId == current.vendorId && device.productId == current.productId) {
+                    disconnectDac()
+                }
+            }
+        }
+    }
+
     init {
         scanRealUsbDevices()
+        try {
+            val filter = IntentFilter().apply {
+                addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+                addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+            }
+            context.registerReceiver(usbReceiver, filter)
+            Log.i(tag, "Registered USB device connection broadcast receiver successfully.")
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to register USB connection receiver: ${e.message}")
+        }
     }
 
     /**
@@ -134,10 +165,7 @@ class UsbDacManager(private val context: Context) {
     }
 
     private fun isAudioDevice(device: UsbDevice): Boolean {
-        // USB Class 1 covers standard USB audio class interfaces
         if (device.deviceClass == UsbConstants.USB_CLASS_AUDIO) return true
-
-        // Check configuration interfaces
         for (i in 0 until device.interfaceCount) {
             val usbInterface = device.getInterface(i)
             if (usbInterface.interfaceClass == UsbConstants.USB_CLASS_AUDIO) {
@@ -150,14 +178,14 @@ class UsbDacManager(private val context: Context) {
     private fun parseUsbDevice(device: UsbDevice): UsbDacInfo {
         val mft = device.manufacturerName ?: "Unknown USB Manufacturer"
         val prod = device.productName ?: "USB Audio Device"
-        val isClass2 = device.deviceSubclass == 2 || device.deviceClass == 0 // heuristic
+        val isClass2 = device.deviceSubclass == 2 || device.deviceClass == 0
 
         return UsbDacInfo(
             manufacturer = mft,
             productName = prod,
             vendorId = device.vendorId,
             productId = device.productId,
-            usbSpeed = "High Speed (480 Mbps)", // default for physical DACs on mobile
+            usbSpeed = "High Speed (480 Mbps)",
             supportedSampleRates = listOf(44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000),
             supportedBitDepths = listOf(16, 24, 32),
             channels = 2,
@@ -166,5 +194,14 @@ class UsbDacManager(private val context: Context) {
             maxDsdMode = if (isClass2) "DSD256 (DoP)" else "None",
             usbClass = if (isClass2) "USB Audio Class 2.0" else "USB Audio Class 1.0"
         )
+    }
+
+    fun release() {
+        try {
+            context.unregisterReceiver(usbReceiver)
+            Log.i(tag, "Unregistered USB device broadcast receiver successfully.")
+        } catch (e: Exception) {
+            // Ignore if already unregistered or failed
+        }
     }
 }
