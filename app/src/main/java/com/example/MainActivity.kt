@@ -362,6 +362,8 @@ fun MainAppScreen(viewModel: MusicViewModel) {
             isExclusiveModeActive = isExclusiveModeEnabled && (connectedDac != null),
             isBitPerfectActive = isBitPerfectEnabled && isExclusiveModeEnabled && (connectedDac != null),
             isDsdActive = currentTrack?.format in listOf("DSF", "DFF", "ISO SACD") || currentTrack?.title?.contains("dsd", true) == true,
+            trackList = trackList,
+            onTrackSelect = { viewModel.playTrack(it) },
             onPlayPauseClick = { viewModel.togglePlayPause() },
             onNextClick = { viewModel.skipToNext() },
             onPreviousClick = { viewModel.skipToPrevious() },

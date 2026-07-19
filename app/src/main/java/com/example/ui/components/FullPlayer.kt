@@ -7,6 +7,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -26,9 +28,11 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.example.R
 import com.example.audio.Track
 import kotlin.math.sin
@@ -46,6 +50,8 @@ fun FullPlayer(
     isExclusiveModeActive: Boolean = false,
     isBitPerfectActive: Boolean = false,
     isDsdActive: Boolean = false,
+    trackList: List<Track> = emptyList(),
+    onTrackSelect: (Track) -> Unit = {},
     onPlayPauseClick: () -> Unit,
     onNextClick: () -> Unit,
     onPreviousClick: () -> Unit,
@@ -58,6 +64,9 @@ fun FullPlayer(
     modifier: Modifier = Modifier
 ) {
     if (track == null) return
+
+    var isQueueDialogShowing by remember { mutableStateOf(false) }
+    var isLyricsDialogShowing by remember { mutableStateOf(false) }
 
     fun formatTime(ms: Long): String {
         val totalSecs = ms / 1000
@@ -283,13 +292,11 @@ fun FullPlayer(
             Spacer(modifier = Modifier.height(12.dp))
 
             // Dynamic High Fidelity Badges Row
-            // Incorporating: USB DAC, Hi-Res, Bit Perfect, DSD, Exclusive Mode badges
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                // 1. USB DAC Badge (displays only if a USB DAC is active/connected)
                 if (isUsbDacConnected) {
                     Box(
                         modifier = Modifier
@@ -306,7 +313,6 @@ fun FullPlayer(
                     }
                 }
 
-                // 2. Hi-Res Badge (always show for lossless high-res source tracks)
                 if (track.isHiRes) {
                     Box(
                         modifier = Modifier
@@ -324,7 +330,6 @@ fun FullPlayer(
                     }
                 }
 
-                // 3. Bit Perfect Badge (show if streaming bypass is true bit-perfect)
                 if (isBitPerfectActive) {
                     Box(
                         modifier = Modifier
@@ -341,7 +346,6 @@ fun FullPlayer(
                     }
                 }
 
-                // 4. DSD Badge (show if current track is format DSF/DSD/ISO)
                 if (isDsdActive) {
                     Box(
                         modifier = Modifier
@@ -358,7 +362,6 @@ fun FullPlayer(
                     }
                 }
 
-                // 5. Exclusive Mode Badge (show if streaming exclusively bypassing system)
                 if (isExclusiveModeActive) {
                     Box(
                         modifier = Modifier
@@ -378,7 +381,6 @@ fun FullPlayer(
 
                 Spacer(modifier = Modifier.weight(1f))
 
-                // Standard metadata badge
                 Box(
                     modifier = Modifier
                         .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
@@ -526,7 +528,7 @@ fun FullPlayer(
             ) {
                 Icon(
                     imageVector = Icons.Default.SkipNext,
-                    contentDescription = "Next Track",
+                    contentDescription = "Next",
                     tint = Color.White.copy(alpha = 0.8f),
                     modifier = Modifier.size(26.dp)
                 )
@@ -535,7 +537,7 @@ fun FullPlayer(
 
         Spacer(modifier = Modifier.weight(1f))
 
-        // Shuffle, List, Lyrics & Repeat Controls
+        // Shuffle, List, Lyrics & Repeat Controls (Interactive Queue and Lyrics overlay integration)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -556,25 +558,25 @@ fun FullPlayer(
             }
 
             IconButton(
-                onClick = {},
-                modifier = Modifier.size(44.dp)
+                onClick = { isQueueDialogShowing = true },
+                modifier = Modifier.size(44.dp).testTag("player_queue_button")
             ) {
                 Icon(
                     imageVector = Icons.Default.QueueMusic,
                     contentDescription = "Queue List",
-                    tint = Color.White.copy(alpha = 0.4f),
+                    tint = Color.White.copy(alpha = 0.8f),
                     modifier = Modifier.size(22.dp)
                 )
             }
 
             IconButton(
-                onClick = {},
-                modifier = Modifier.size(44.dp)
+                onClick = { isLyricsDialogShowing = true },
+                modifier = Modifier.size(44.dp).testTag("player_lyrics_button")
             ) {
                 Icon(
                     imageVector = Icons.Default.Message,
                     contentDescription = "Lyrics",
-                    tint = Color.White.copy(alpha = 0.4f),
+                    tint = Color.White.copy(alpha = 0.8f),
                     modifier = Modifier.size(22.dp)
                 )
             }
@@ -589,6 +591,184 @@ fun FullPlayer(
                     tint = if (isRepeatEnabled) Color(0xFFE23E57) else Color.White.copy(alpha = 0.4f),
                     modifier = Modifier.size(22.dp)
                 )
+            }
+        }
+    }
+
+    // --- Synced Queue List Overlay Dialog ---
+    if (isQueueDialogShowing) {
+        Dialog(onDismissRequest = { isQueueDialogShowing = false }) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(420.dp)
+                    .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(20.dp))
+                    .testTag("queue_dialog"),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF161616)),
+                shape = RoundedCornerShape(20.dp)
+            ) {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Active Play Queue",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp
+                        )
+                        IconButton(onClick = { isQueueDialogShowing = false }) {
+                            Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = Color.Gray)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(trackList, key = { it.id }) { item ->
+                            val isPlayingThis = item.id == track.id
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (isPlayingThis) Color(0x33E23E57) else Color.Transparent)
+                                    .clickable {
+                                        onTrackSelect(item)
+                                        isQueueDialogShowing = false
+                                    }
+                                    .padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(Color.DarkGray)
+                                ) {
+                                    if (item.coverResId != null) {
+                                        Image(
+                                            painter = painterResource(id = item.coverResId),
+                                            contentDescription = "Art",
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.width(12.dp))
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = item.title,
+                                        color = if (isPlayingThis) Color(0xFFE23E57) else Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = item.artist,
+                                        color = Color.Gray,
+                                        fontSize = 11.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                if (isPlayingThis) {
+                                    Icon(
+                                        imageVector = Icons.Default.PlayArrow,
+                                        contentDescription = "Playing",
+                                        tint = Color(0xFFE23E57),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Curated Lyrics Overlay Dialog ---
+    if (isLyricsDialogShowing) {
+        val lyricsLines = when (track.title) {
+            "Aura Ambient" -> listOf(
+                "[00:00] Floating through cosmic space...",
+                "[00:15] Low latency JNI buffer active...",
+                "[00:30] Pure Direct driver levels align...",
+                "[00:45] Pristine 24-bit audio depth..."
+            )
+            "Neon Pulse" -> listOf(
+                "[00:00] Synth wave heartbeat pulsing...",
+                "[00:15] Direct hardware endpoints lock...",
+                "[00:30] High fidelity retro retro beats...",
+                "[00:45] Bypassing Android system mixer..."
+            )
+            "Zen Echoes" -> listOf(
+                "[00:00] Flute resonance breathing softly...",
+                "[00:15] Infinite tranquil echo waves...",
+                "[00:30] Safe buffer, low jitter clocking...",
+                "[00:45] Resting in perfect audio master..."
+            )
+            else -> listOf(
+                "No synchronized lyrics found.",
+                "Original Master Stereo playback active."
+            )
+        }
+
+        Dialog(onDismissRequest = { isLyricsDialogShowing = false }) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(360.dp)
+                    .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(20.dp))
+                    .testTag("lyrics_dialog"),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF161616)),
+                shape = RoundedCornerShape(20.dp)
+            ) {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Lyrics: ${track.title}",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                        IconButton(onClick = { isLyricsDialogShowing = false }) {
+                            Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = Color.Gray)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        items(lyricsLines) { line ->
+                            Text(
+                                text = line,
+                                color = if (line.startsWith("[")) Color.White else Color.Gray,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                }
             }
         }
     }
