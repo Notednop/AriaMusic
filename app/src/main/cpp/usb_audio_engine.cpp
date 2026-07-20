@@ -10,6 +10,7 @@
 #include <android/log.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <errno.h>
 
 #define LOG_TAG "iMikasa_NativeUSB"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -120,6 +121,14 @@ static std::atomic<bool> g_isExclusiveMode(true);
 static std::atomic<bool> g_isIsochronousMode(true);
 static std::atomic<int> g_usbFd(-1);
 
+// Linux USB bulk transfer structure
+struct usbdevfs_bulktransfer {
+    unsigned int ep;
+    unsigned int len;
+    unsigned int timeout;
+    void *data;
+};
+
 /**
  * Native audio driver worker thread mimicking direct hardware streaming via USB OUT endpoints.
  */
@@ -159,10 +168,32 @@ void usbAudioThreadFunc() {
 
             // Short adaptive wait for the ring buffer to fill up again
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            bytesRead = bytesNeeded; // Pad to maintain frame size and alignment during underruns
         }
 
-        // Simulate USB packet transmission to endpoint
-        if (g_isPlaying) {
+        // --- ACTUAL PHYSICAL USB DATA TRANSMISSION ---
+        if (g_usbFd > 0 && bytesRead > 0) {
+            struct usbdevfs_bulktransfer transfer;
+            transfer.ep = g_activeEndpoint.load(); // OUT endpoint address (default is 2)
+            transfer.len = bytesRead;
+            transfer.timeout = 100; // 100ms transfer timeout
+            transfer.data = dummyDacBuffer.data();
+
+            // Execute direct low-level Linux USB bulk write (ioctl 0xC0185502)
+            int res = ioctl(g_usbFd, 0xC0185502, &transfer);
+            if (res < 0) {
+                // Warning log on transient write failures
+                LOGW("[DRIVER] Direct USB bulk transfer of %zu bytes to endpoint 0x%02X failed with code: %d (errno=%d)",
+                     bytesRead, transfer.ep, res, errno);
+            } else {
+                LOGI("[DRIVER] Direct USB bulk transfer of %zu bytes to endpoint 0x%02X succeeded!",
+                     bytesRead, transfer.ep);
+            }
+        }
+
+        // Simulate USB packet transmission rate (only sleep if we didn't write to physical USB,
+        // as physical writes naturally throttle the thread using hardware-blocking ioctl!)
+        if (g_isPlaying && g_usbFd <= 0) {
             // Sleep to simulate exact hardware transmission rate
             double frameDurationMs = (double)g_bufferSize / (double)g_sampleRate * 1000.0;
             std::this_thread::sleep_for(std::chrono::microseconds(static_cast<int>(frameDurationMs * 1000.0)));
