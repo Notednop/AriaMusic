@@ -6,7 +6,10 @@
 #include <condition_variable>
 #include <chrono>
 #include <atomic>
+#include <memory>
 #include <android/log.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
 
 #define LOG_TAG "iMikasa_NativeUSB"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -100,11 +103,9 @@ public:
     }
 };
 
-#include <sys/ioctl.h>
-#include <unistd.h>
-
 // Global variables for USB hardware direct streaming emulation
-static RingBuffer* g_ringBuffer = nullptr;
+static std::shared_ptr<RingBuffer> g_ringBuffer = nullptr;
+static std::mutex g_engineMutex;
 static std::thread g_audioThread;
 static std::atomic<bool> g_isPlaying(false);
 static std::atomic<int> g_sampleRate(44100);
@@ -139,7 +140,16 @@ void usbAudioThreadFunc() {
             dummyDacBuffer.resize(bytesNeeded * 2);
         }
 
-        size_t bytesRead = g_ringBuffer->read(dummyDacBuffer.data(), bytesNeeded);
+        size_t bytesRead = 0;
+        std::shared_ptr<RingBuffer> ringBuf;
+        {
+            std::lock_guard<std::mutex> lock(g_engineMutex);
+            ringBuf = g_ringBuffer;
+        }
+
+        if (ringBuf) {
+            bytesRead = ringBuf->read(dummyDacBuffer.data(), bytesNeeded);
+        }
 
         if (bytesRead < bytesNeeded) {
             // Under-run recovery pipeline
@@ -166,12 +176,12 @@ void usbAudioThreadFunc() {
 extern "C" {
 
 JNIEXPORT jboolean JNICALL
-Java_com_example_audio_UsbAudioEngine_nativeInit(JNIEnv *env, jobject thiz, jint initial_capacity, jint usb_fd) {
+Java_com_anothernop_imikasa_audio_UsbAudioEngine_nativeInit(JNIEnv *env, jobject thiz, jint initial_capacity, jint usb_fd) {
     LOGI("[JNI] nativeInit called with capacity: %d, usbFd: %d", initial_capacity, usb_fd);
-    if (g_ringBuffer) {
-        delete g_ringBuffer;
+    {
+        std::lock_guard<std::mutex> lock(g_engineMutex);
+        g_ringBuffer = std::make_shared<RingBuffer>(initial_capacity);
     }
-    g_ringBuffer = new RingBuffer(initial_capacity);
     g_isPlaying = false;
     g_underrunCount = 0;
 
@@ -194,20 +204,20 @@ Java_com_example_audio_UsbAudioEngine_nativeInit(JNIEnv *env, jobject thiz, jint
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_audio_UsbAudioEngine_nativeRelease(JNIEnv *env, jobject thiz) {
+Java_com_anothernop_imikasa_audio_UsbAudioEngine_nativeRelease(JNIEnv *env, jobject thiz) {
     LOGI("[JNI] nativeRelease called.");
     g_isPlaying = false;
     if (g_audioThread.joinable()) {
         g_audioThread.join();
     }
-    if (g_ringBuffer) {
-        delete g_ringBuffer;
+    {
+        std::lock_guard<std::mutex> lock(g_engineMutex);
         g_ringBuffer = nullptr;
     }
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_audio_UsbAudioEngine_nativeSetParameters(JNIEnv *env, jobject thiz, jint sample_rate, jint bit_depth, jint buffer_size) {
+Java_com_anothernop_imikasa_audio_UsbAudioEngine_nativeSetParameters(JNIEnv *env, jobject thiz, jint sample_rate, jint bit_depth, jint buffer_size) {
     g_sampleRate = sample_rate;
     g_bitDepth = bit_depth;
     g_bufferSize = buffer_size;
@@ -215,18 +225,23 @@ Java_com_example_audio_UsbAudioEngine_nativeSetParameters(JNIEnv *env, jobject t
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_audio_UsbAudioEngine_nativeStart(JNIEnv *env, jobject thiz) {
+Java_com_anothernop_imikasa_audio_UsbAudioEngine_nativeStart(JNIEnv *env, jobject thiz) {
     LOGI("[JNI] nativeStart called.");
     if (g_isPlaying) return;
-    if (g_ringBuffer) {
-        g_ringBuffer->clear();
+    std::shared_ptr<RingBuffer> ringBuf;
+    {
+        std::lock_guard<std::mutex> lock(g_engineMutex);
+        ringBuf = g_ringBuffer;
+    }
+    if (ringBuf) {
+        ringBuf->clear();
     }
     g_isPlaying = true;
     g_audioThread = std::thread(usbAudioThreadFunc);
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_audio_UsbAudioEngine_nativeStop(JNIEnv *env, jobject thiz) {
+Java_com_anothernop_imikasa_audio_UsbAudioEngine_nativeStop(JNIEnv *env, jobject thiz) {
     LOGI("[JNI] nativeStop called.");
     if (!g_isPlaying) return;
     g_isPlaying = false;
@@ -236,20 +251,25 @@ Java_com_example_audio_UsbAudioEngine_nativeStop(JNIEnv *env, jobject thiz) {
 }
 
 JNIEXPORT jint JNICALL
-Java_com_example_audio_UsbAudioEngine_nativeWrite(JNIEnv *env, jobject thiz, jbyteArray data, jint offset, jint length) {
-    if (!g_ringBuffer) return 0;
+Java_com_anothernop_imikasa_audio_UsbAudioEngine_nativeWrite(JNIEnv *env, jobject thiz, jbyteArray data, jint offset, jint length) {
+    std::shared_ptr<RingBuffer> ringBuf;
+    {
+        std::lock_guard<std::mutex> lock(g_engineMutex);
+        ringBuf = g_ringBuffer;
+    }
+    if (!ringBuf) return 0;
 
     jbyte* pData = env->GetByteArrayElements(data, nullptr);
     if (!pData) return 0;
 
-    size_t written = g_ringBuffer->write(reinterpret_cast<const uint8_t*>(pData + offset), length);
+    size_t written = ringBuf->write(reinterpret_cast<const uint8_t*>(pData + offset), length);
 
     env->ReleaseByteArrayElements(data, pData, JNI_ABORT);
     return static_cast<jint>(written);
 }
 
 JNIEXPORT jint JNICALL
-Java_com_example_audio_UsbAudioEngine_nativeGetBufferUnderruns(JNIEnv *env, jobject thiz) {
+Java_com_anothernop_imikasa_audio_UsbAudioEngine_nativeGetBufferUnderruns(JNIEnv *env, jobject thiz) {
     return g_underrunCount.load();
 }
 

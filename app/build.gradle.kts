@@ -10,7 +10,7 @@ plugins {
 }
 
 android {
-  namespace = "com.example"
+  namespace = "com.anothernop.imikasa"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
@@ -90,6 +90,7 @@ dependencies {
   implementation(libs.androidx.compose.ui.graphics)
   implementation(libs.androidx.compose.ui.tooling.preview)
   implementation(libs.androidx.core.ktx)
+  implementation("androidx.media:media:1.7.0")
   // implementation(libs.androidx.datastore.preferences)
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.runtime.ktx)
