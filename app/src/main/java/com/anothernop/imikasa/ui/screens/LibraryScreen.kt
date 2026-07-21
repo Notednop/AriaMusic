@@ -38,6 +38,11 @@ import com.anothernop.imikasa.audio.Track
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+// Static global cache for decoded track covers to prevent redundant file parsing/OOMs and guarantee butter-smooth scrolling!
+object CoverCache {
+    val cache = java.util.concurrent.ConcurrentHashMap<String, androidx.compose.ui.graphics.ImageBitmap>()
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
@@ -510,14 +515,21 @@ fun LibraryTrackRow(
             .testTag("library_track_row_${track.id}"),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Asynchronous, on-demand local album art loading with zero memory footprint leaks!
-        var libEmbeddedImage by remember(track.id) { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+        // High-Performance memory-cached and on-demand local album art loading!
+        val cachedImage = remember(track.id) { CoverCache.cache[track.id] }
+        var libEmbeddedImage by remember(track.id) { mutableStateOf(cachedImage) }
 
         LaunchedEffect(track.id) {
+            if (libEmbeddedImage != null) return@LaunchedEffect // Already loaded/cached, skip!
+
             if (track.embeddedArt != null) {
                 try {
                     val bytes = track.embeddedArt
-                    libEmbeddedImage = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+                    val bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+                    if (bitmap != null) {
+                        CoverCache.cache[track.id] = bitmap
+                        libEmbeddedImage = bitmap
+                    }
                 } catch (e: Exception) {}
             } else {
                 withContext(Dispatchers.IO) {
@@ -529,8 +541,10 @@ fun LibraryTrackRow(
                             if (bytes != null) {
                                 val bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                                 if (bitmap != null) {
+                                    val imageBitmap = bitmap.asImageBitmap()
+                                    CoverCache.cache[track.id] = imageBitmap
                                     withContext(Dispatchers.Main) {
-                                        libEmbeddedImage = bitmap.asImageBitmap()
+                                        libEmbeddedImage = imageBitmap
                                     }
                                 }
                             }
@@ -540,8 +554,10 @@ fun LibraryTrackRow(
                             if (bytes != null) {
                                 val bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                                 if (bitmap != null) {
+                                    val imageBitmap = bitmap.asImageBitmap()
+                                    CoverCache.cache[track.id] = imageBitmap
                                     withContext(Dispatchers.Main) {
-                                        libEmbeddedImage = bitmap.asImageBitmap()
+                                        libEmbeddedImage = imageBitmap
                                     }
                                 }
                             }
